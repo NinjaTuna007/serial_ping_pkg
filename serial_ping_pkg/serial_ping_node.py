@@ -19,6 +19,7 @@ class SerialPingNode(Node):
         self.leader1_ping_command = config['serial']['leader1']
         self.leader2_ping_command = config['serial']['leader2']
         self.sound_velocity = config['serial']['sound_velocity']
+        self.timeout_threshold = config['serial']['timeout_threshold']
 
         self.last_pinged = None
         self.ping_time = None
@@ -73,7 +74,7 @@ class SerialPingNode(Node):
             while True:
 
                 # check for timeout
-                if time.time() - self.ping_time > 0.5:
+                if time.time() - self.ping_time > self.timeout_threshold:
                     self.get_logger().error("Ping timed out")
                     self.timed_out = True
                     break
