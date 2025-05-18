@@ -38,7 +38,7 @@ class SerialPingNode(Node):
         self.distance_2_pub = self.create_publisher(Float32, 'leader2/distance', 10)
 
         # Timer to run every second
-        self.timer = self.create_timer(1.0, self.alternate_leader_ping)
+        self.timer = self.create_timer(0.5, self.alternate_leader_ping)
 
     def load_config(self):
         config_path = os.path.join(
