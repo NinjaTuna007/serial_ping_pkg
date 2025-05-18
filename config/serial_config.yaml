@@ -1,0 +1,6 @@
+serial:
+  port: "/dev/ttyUSB0"
+  baudrate: 9600
+  leader1: "$P001"
+  leader2: "$P002"
+  sound_velocity: 335
