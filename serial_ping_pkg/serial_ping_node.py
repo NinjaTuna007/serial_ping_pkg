@@ -15,6 +15,7 @@ class SerialPingNode(Node):
         config = self.load_config()
 
         self.port = config['serial']['port']
+        self.port_fallback = config['serial']['port_fallback']
         self.baudrate = config['serial']['baudrate']
         self.leader1_ping_command = config['serial']['leader1']
         self.leader2_ping_command = config['serial']['leader2']
@@ -30,9 +31,19 @@ class SerialPingNode(Node):
             self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
             if self.ser.is_open:
                 self.get_logger().info(f"Serial port {self.port} opened at {self.baudrate} baud")
+
         except serial.SerialException as e:
-            self.get_logger().error(f"Failed to open serial port: {e}")
-            return
+            self.get_logger().error(f"Failed to open serial port {self.port}: {e}")
+            self.get_logger().info(f"Trying fallback port: {self.port_fallback}")
+            try:
+                self.ser = serial.Serial(self.port_fallback, self.baudrate, timeout=1)
+                if self.ser.is_open:
+                    self.get_logger().info(f"Serial port {self.port_fallback} opened at {self.baudrate} baud")
+            except serial.SerialException as e:
+                self.get_logger().error(f"Failed to open fallback serial port {self.port_fallback}: {e}")
+                self.get_logger().error("No serial port available. Exiting node.")
+                rclpy.shutdown()
+                return
 
         # Create publisher
         self.distance_1_pub = self.create_publisher(Float32, 'leader1/distance', 10)
