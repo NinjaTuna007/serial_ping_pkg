@@ -24,7 +24,8 @@ setup(
     entry_points={
         'console_scripts': [
             'serial_ping_node = serial_ping_pkg.serial_ping_node:main',
+            'smarc_pos_broadcast_node = serial_ping_pkg.smarc_pos_broadcast_node:main',
+            'smarc_pos_receiver_node = serial_ping_pkg.smarc_pos_receiver_node:main',
         ],
     },
 )
-# This setup script is for a ROS 2 package named 'serial_ping_pkg'.

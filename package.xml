@@ -4,8 +4,8 @@
   <name>serial_ping_pkg</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
-  <maintainer email="smarc@todo.todo">smarc</maintainer>
-  <license>TODO: License declaration</license>
+  <maintainer email="sdup@kth.se">Shekhar Devm Upadhyay</maintainer>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
 
