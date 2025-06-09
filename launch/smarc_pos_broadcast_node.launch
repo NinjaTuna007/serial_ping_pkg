@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Launch arguments for parameters -->
+    <arg name="serial_port" default="/dev/ttyUSB0" description="Serial port to use"/>
+    <arg name="serial_port_fallback" default="/dev/ttyUSB4" description="Fallback serial port"/>
+    <arg name="serial_baudrate" default="9600" description="Serial baudrate"/>
+    <arg name="robot_name" default="lolo" description="Name of the robot who is publishing their position"/>
+
+    <!-- SMARC Position Broadcast Node -->
+    <node pkg="serial_ping_pkg" 
+          exec="smarc_pos_broadcast_node" 
+          name="smarc_pos_broadcast_node" 
+          output="screen">
+        
+        <!-- Set parameters -->
+        <param name="serial.port" value="$(var serial_port)"/>
+        <param name="serial.port_fallback" value="$(var serial_port_fallback)"/>
+        <param name="serial.baudrate" value="$(var serial_baudrate)"/>
+        <param name="robot_name" value="$(var robot_name)"/>
+    </node>
+</launch>

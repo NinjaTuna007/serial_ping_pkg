@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Launch arguments for parameters -->
+    <arg name="serial_port" default="/dev/ttyUSB0" description="Serial port to use"/>
+    <arg name="serial_port_fallback" default="/dev/ttyUSB4" description="Fallback serial port"/>
+    <arg name="serial_baudrate" default="9600" description="Serial baudrate"/>
+    <arg name="leader1_command" default="R00" description="Leader 1 ping command"/>
+    <arg name="leader2_command" default="R01" description="Leader 2 ping command"/>
+    <arg name="sound_velocity" default="1500.0" description="Sound velocity in m/s"/>
+    <arg name="timeout_threshold" default="5.0" description="Timeout threshold in seconds"/>
+
+    <!-- Serial Ping Node -->
+    <node pkg="serial_ping_pkg" 
+          exec="serial_ping_node" 
+          name="serial_ping_node" 
+          output="screen">
+        
+        <!-- Set parameters -->
+        <param name="serial.port" value="$(var serial_port)"/>
+        <param name="serial.port_fallback" value="$(var serial_port_fallback)"/>
+        <param name="serial.baudrate" value="$(var serial_baudrate)"/>
+        <param name="serial.leader1" value="$(var leader1_command)"/>
+        <param name="serial.leader2" value="$(var leader2_command)"/>
+        <param name="serial.sound_velocity" value="$(var sound_velocity)"/>
+        <param name="serial.timeout_threshold" value="$(var timeout_threshold)"/>
+    </node>
+</launch>

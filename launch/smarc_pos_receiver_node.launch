@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Launch arguments for parameters -->
+    <arg name="serial_port" default="/dev/ttyUSB0" description="Serial port to use"/>
+    <arg name="serial_port_fallback" default="/dev/ttyUSB1" description="Fallback serial port"/>
+    <arg name="serial_baudrate" default="9600" description="Serial baudrate"/>
+    
+    <!-- Robot configuration arguments -->
+    <arg name="lolo_name" default="lolo" description="Name for lolo robot"/>
+    <arg name="sam_name" default="sam" description="Name for sam robot"/>
+    <arg name="lolo_modem_id" default="007" description="Lolo modem ID"/>
+    <arg name="sam_modem_id" default="069" description="Sam modem ID"/>
+    
+    <!-- Add use_sim_time argument -->
+    <arg name="use_sim_time" default="false" description="Use simulation time"/>
+
+    <!-- SMARC Position Receiver Node -->
+    <node pkg="serial_ping_pkg" 
+          exec="smarc_pos_receiver_node" 
+          name="smarc_pos_receiver_node" 
+          output="screen">
+        
+        <!-- Set parameters directly -->
+        <param name="serial.port" value="$(var serial_port)"/>
+        <param name="serial.port_fallback" value="$(var serial_port_fallback)"/>
+        <param name="serial.baudrate" value="$(var serial_baudrate)"/>
+        <param name="use_sim_time" value="$(var use_sim_time)"/>
+        <param name="robots.lolo.name" value="$(var lolo_name)"/>
+        <param name="robots.sam.name" value="$(var sam_name)"/>
+        <param name="robots.lolo.modem_id" value="$(var lolo_modem_id)"/>
+        <param name="robots.sam.modem_id" value="$(var sam_modem_id)"/>
+    </node>
+</launch>

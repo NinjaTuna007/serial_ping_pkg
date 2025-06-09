@@ -3,6 +3,6 @@ serial:
   port_fallback: "/dev/ttyUSB4"
   baudrate: 9600
   leader1: "$P001"
-  leader2: "$P001"
+  leader2: "$P002"
   sound_velocity: 1500
   timeout_threshold: 0.5
