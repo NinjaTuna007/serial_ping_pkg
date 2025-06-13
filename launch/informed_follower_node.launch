@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="serial_port" default="/dev/ttyUSB0" description="Serial port to use"/>
+    <arg name="serial_port_fallback" default="/dev/ttyUSB1" description="Fallback serial port"/>
+    <arg name="serial_baudrate" default="9600" description="Serial baudrate"/>
+    <arg name="leader_name" default="leader" description="Name for leader robot"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="informed_follower_node"
+          name="informed_follower_node"
+          output="screen">
+        <param name="serial.port" value="$(var serial_port)"/>
+        <param name="serial.port_fallback" value="$(var serial_port_fallback)"/>
+        <param name="serial.baudrate" value="$(var serial_baudrate)"/>
+        <param name="leader_name" value="$(var leader_name)"/>
+    </node>
+</launch>

@@ -27,6 +27,8 @@ setup(
             'serial_ping_node = serial_ping_pkg.serial_ping_node:main',
             'smarc_pos_broadcast_node = serial_ping_pkg.smarc_pos_broadcast_node:main',
             'smarc_pos_receiver_node = serial_ping_pkg.smarc_pos_receiver_node:main',
+            'informed_leader_node = serial_ping_pkg.informed_leader_follower.informed_leader_node:main',
+            'informed_follower_node = serial_ping_pkg.informed_leader_follower.informed_follower_node:main',
         ],
     },
 )
