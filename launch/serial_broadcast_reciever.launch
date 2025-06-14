@@ -1,0 +1,10 @@
+<launch>
+  <arg name="port" default="/dev/ttyUSB0" />
+
+  <node pkg="serial_ping_pkg"
+        exec="SerialBroadcastReceiver"
+        name="SerialBroadcastReceiver"
+        output="screen">
+    <param name="port" value="$(arg port)" />
+  </node>
+</launch>
