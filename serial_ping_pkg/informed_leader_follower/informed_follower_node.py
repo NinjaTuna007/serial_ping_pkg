@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from geographic_msgs.msg import GeoPoint
 from std_msgs.msg import Float32
+from sensor_msgs.msg import NavSatFix
 from serial_ping_pkg.utils import load_yaml_config, init_serial
 
 class InformedFollowerNode(Node):
@@ -24,8 +25,22 @@ class InformedFollowerNode(Node):
             rclpy.shutdown()
             return
 
+        # Parameters for leader's GPS topic and message type
+        self.declare_parameter('leader_gps_topic', f'/{self.leader_name}/smarc/latlon')
+        self.declare_parameter('leader_gps_msg_type', 'GeoPoint')
+        self.leader_gps_topic = self.get_parameter('leader_gps_topic').get_parameter_value().string_value
+        self.leader_gps_msg_type = self.get_parameter('leader_gps_msg_type').get_parameter_value().string_value
+
+        # Dynamically import the message type
+        if self.leader_gps_msg_type == 'GeoPoint':
+            self.LeaderMsgType = GeoPoint
+        elif self.leader_gps_msg_type == 'NavSatFix':
+            self.LeaderMsgType = NavSatFix
+        else:
+            raise ValueError(f"Unsupported message type: {self.leader_gps_msg_type}")
+
         # Publishers for leader's position and distance
-        self.leader_pos_pub = self.create_publisher(GeoPoint, f"/{self.leader_name}/smarc/latlon", 10)
+        self.leader_pos_pub = self.create_publisher(self.LeaderMsgType, self.leader_gps_topic, 10)
         self.leader_dist_pub = self.create_publisher(Float32, f"/{self.leader_name}/distance", 10)
 
         self.timer = self.create_timer(0.5, self.read_serial)
@@ -53,15 +68,21 @@ class InformedFollowerNode(Node):
             lat = float(parts[0])
             lon = float(parts[1])
             dist = float(parts[2])
-            pos_msg = GeoPoint()
-            pos_msg.latitude = lat
-            pos_msg.longitude = lon
-            pos_msg.altitude = 0.0
+            if self.leader_gps_msg_type == 'GeoPoint':
+                pos_msg = GeoPoint()
+                pos_msg.latitude = lat
+                pos_msg.longitude = lon
+                pos_msg.altitude = 0.0
+            elif self.leader_gps_msg_type == 'NavSatFix':
+                pos_msg = NavSatFix()
+                pos_msg.latitude = lat
+                pos_msg.longitude = lon
+                pos_msg.altitude = 0.0
             self.leader_pos_pub.publish(pos_msg)
             dist_msg = Float32()
             dist_msg.data = dist
             self.leader_dist_pub.publish(dist_msg)
-            self.get_logger().info(f"Published leader pos ({lat}, {lon}) and distance {dist}")
+            self.get_logger().info(f"Published leader pos and distance {dist}")
         except Exception as e:
             self.get_logger().warn(f"Failed to parse/publish: {e}")
 

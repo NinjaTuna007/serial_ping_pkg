@@ -6,3 +6,6 @@ serial:
   leader2: "$P002"
   sound_velocity: 1500
   timeout_threshold: 0.5
+
+leader_gps_topic: "/leader1/code/gps"
+leader_gps_msg_type: "NavSatFix"  # or "GeoPoint"
