@@ -4,8 +4,11 @@ serial:
   baudrate: 9600
   leader1: "$P001"
   leader2: "$P002"
-  sound_velocity: 1500
+  sound_velocity: 1500.0
   timeout_threshold: 0.5
 
-leader_gps_topic: "/leader1/code/gps"
+# stuff for the realistic (pos,dist) ping
+leader_gps_topic: "/follower/leader2/core/gps"
 leader_gps_msg_type: "NavSatFix"  # or "GeoPoint"
+ping_command: "$P111"
+timer_period: 5.0  # or any other value you want

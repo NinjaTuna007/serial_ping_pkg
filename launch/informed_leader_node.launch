@@ -1,12 +1,13 @@
 <?xml version="1.0"?>
 <launch>
     <arg name="serial_port" default="/dev/ttyUSB0" description="Serial port to use"/>
-    <arg name="serial_port_fallback" default="/dev/ttyUSB1" description="Fallback serial port"/>
+    <arg name="serial_port_fallback" default="/dev/ttyUSB0" description="Fallback serial port"/>
     <arg name="serial_baudrate" default="9600" description="Serial baudrate"/>
     <arg name="robot_name" default="leader" description="Name for leader robot"/>
-    <arg name="ping_command" default="PING" description="Ping command string"/>
+    <arg name="ping_command" default="$P111" description="Ping command string"/>
     <arg name="sound_velocity" default="1500.0" description="Sound velocity"/>
     <arg name="timeout_threshold" default="2.0" description="Timeout threshold"/>
+    <arg name="is_slave" default="false" description="Is this node a slave?"/>
 
     <node pkg="serial_ping_pkg"
           exec="informed_leader_node"
@@ -19,5 +20,6 @@
         <param name="ping_command" value="$(var ping_command)"/>
         <param name="sound_velocity" value="$(var sound_velocity)"/>
         <param name="timeout_threshold" value="$(var timeout_threshold)"/>
+        <param name="is_slave" value="$(var is_slave)"/>
     </node>
 </launch>
