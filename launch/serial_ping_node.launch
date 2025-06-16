@@ -4,8 +4,8 @@
     <arg name="serial_port" default="/dev/ttyUSB0" description="Serial port to use"/>
     <arg name="serial_port_fallback" default="/dev/ttyUSB4" description="Fallback serial port"/>
     <arg name="serial_baudrate" default="9600" description="Serial baudrate"/>
-    <arg name="leader1_command" default="R00" description="Leader 1 ping command"/>
-    <arg name="leader2_command" default="R01" description="Leader 2 ping command"/>
+    <arg name="leader1_command" default="$P001" description="Leader 1 ping command"/>
+    <arg name="leader2_command" default="$P002" description="Leader 2 ping command"/>
     <arg name="sound_velocity" default="1500.0" description="Sound velocity in m/s"/>
     <arg name="timeout_threshold" default="5.0" description="Timeout threshold in seconds"/>
 

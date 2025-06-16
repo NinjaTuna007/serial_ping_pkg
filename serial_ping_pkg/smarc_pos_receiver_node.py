@@ -3,74 +3,38 @@
 import rclpy
 from rclpy.node import Node
 from geographic_msgs.msg import GeoPoint
-from serial_ping_pkg.utils import init_serial
+from serial_ping_pkg.utils import init_serial, load_yaml_config
 
 class SmarcPosReceiverNode(Node):
     def __init__(self):
         super().__init__('smarc_pos_receiver_node')
 
-        # Declare parameters with defaults - no config file dependency
-        self.declare_parameter('serial.port', '/dev/ttyUSB0')
-        self.declare_parameter('serial.port_fallback', '/dev/ttyUSB1')
-        self.declare_parameter('serial.baudrate', 9600)
-        
-        # Robot configuration parameters - allow any type for modem_id
-        self.declare_parameter('robots.lolo.modem_id')
-        self.declare_parameter('robots.sam.modem_id')
-        self.declare_parameter('robots.lolo.name', 'lolo')
-        self.declare_parameter('robots.sam.name', 'sam')
+        # Load config from YAML
+        config = load_yaml_config('serial_ping_pkg', 'serial_config.yaml')
+        pos_receiver_cfg = config.get('pos_receiver', {})
+        serial_cfg = config.get('serial', {})
 
-        self.port = self.get_parameter('serial.port').get_parameter_value().string_value
-        self.port_fallback = self.get_parameter('serial.port_fallback').get_parameter_value().string_value
-        self.baudrate = self.get_parameter('serial.baudrate').get_parameter_value().integer_value
+        self.port = serial_cfg.get('port', '/dev/ttyUSB0')
+        self.port_fallback = serial_cfg.get('port_fallback', '/dev/ttyUSB1')
+        self.baudrate = serial_cfg.get('baudrate', 9600)
 
         self.ser = init_serial(self.port, self.port_fallback, self.baudrate, self.get_logger())
         if self.ser is None:
             rclpy.shutdown()
             return
 
-        # Build robot configuration dynamically
+        # Build robot configuration from config file
         self.robot_config = {}
         self.robot_publishers = {}
-        
-        # Configure lolo - handle both string and numeric parameter types
-        lolo_modem_param = self.get_parameter('robots.lolo.modem_id').get_parameter_value()
-        if lolo_modem_param.type == 1:  # STRING
-            lolo_modem_id = lolo_modem_param.string_value
-        elif lolo_modem_param.type == 2:  # INTEGER  
-            lolo_modem_id = f"{lolo_modem_param.integer_value:03d}"
-        elif lolo_modem_param.type == 3:  # DOUBLE
-            lolo_modem_id = f"{int(lolo_modem_param.double_value):03d}"
-        else:
-            lolo_modem_id = str(lolo_modem_param.string_value)
-            
-        lolo_name = self.get_parameter('robots.lolo.name').get_parameter_value().string_value
-        lolo_topic = f"/relay_{lolo_name}/smarc/latlon"
-        self.robot_config[lolo_modem_id] = {'name': lolo_name, 'topic': lolo_topic}
-        self.robot_publishers[lolo_modem_id] = self.create_publisher(GeoPoint, lolo_topic, 10)
-        self.get_logger().info(f"Configured robot {lolo_name} with modem ID {lolo_modem_id} -> topic {lolo_topic}")
-        
-        # Configure sam - handle both string and numeric parameter types
-        sam_modem_param = self.get_parameter('robots.sam.modem_id').get_parameter_value()
-        if sam_modem_param.type == 1:  # STRING
-            sam_modem_id = sam_modem_param.string_value
-        elif sam_modem_param.type == 2:  # INTEGER
-            sam_modem_id = f"{sam_modem_param.integer_value:03d}"
-        elif sam_modem_param.type == 3:  # DOUBLE
-            sam_modem_id = f"{int(sam_modem_param.double_value):03d}"
-        else:
-            sam_modem_id = str(sam_modem_param.string_value)
-            
-        sam_name = self.get_parameter('robots.sam.name').get_parameter_value().string_value
-        sam_topic = f"/relay_{sam_name}/smarc/latlon"
-        self.robot_config[sam_modem_id] = {'name': sam_name, 'topic': sam_topic}
-        self.robot_publishers[sam_modem_id] = self.create_publisher(GeoPoint, sam_topic, 10)
-        self.get_logger().info(f"Configured robot {sam_name} with modem ID {sam_modem_id} -> topic {sam_topic}")
+        robots = pos_receiver_cfg.get('robots', {})
+        for robot_name, robot_info in robots.items():
+            modem_id = str(robot_info.get('modem_id')).zfill(3)
+            topic = robot_info.get('topic', f"/relay_{robot_name}/smarc/latlon")
+            self.robot_config[modem_id] = {'name': robot_name, 'topic': topic}
+            self.robot_publishers[modem_id] = self.create_publisher(GeoPoint, topic, 10)
+            self.get_logger().info(f"Configured robot {robot_name} with modem ID {modem_id} -> topic {topic}")
 
-        # Timer to check serial port regularly
         self.timer = self.create_timer(0.5, self.read_serial)
-
-        # Buffer for incomplete lines
         self.buffer = ""
 
     def read_serial(self):

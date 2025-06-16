@@ -12,3 +12,13 @@ leader_gps_topic: "/follower/leader2/core/gps"
 leader_gps_msg_type: "NavSatFix"  # or "GeoPoint"
 ping_command: "$P111"
 timer_period: 5.0  # or any other value you want
+
+# Add this section for the position receiver node
+pos_receiver:
+  robots:
+    lolo:
+      modem_id: "007"
+      topic: "/relay_lolo/smarc/latlon"
+    sam:
+      modem_id: "111"
+      topic: "/relay_sam/smarc/latlon"
