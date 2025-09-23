@@ -36,6 +36,7 @@ setup(
             'SerialBroadcastReceiver = serial_ping_pkg.SerialBroadcastReceiver:main',
             'informed_leader_node = serial_ping_pkg.informed_leader_follower.informed_leader_node:main',
             'informed_follower_node = serial_ping_pkg.informed_leader_follower.informed_follower_node:main',
+            'single_target_ping_node = serial_ping_pkg.single_target_ping_node:main',
         ],
     },
 )
