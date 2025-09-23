@@ -45,6 +45,12 @@ The Serial Ping Package enables underwater vehicles to:
    - Implements autonomous following behavior
    - Distance-based navigation
 
+7. **Single Target Ping Node** (`single_target_ping_node`)
+   - Continuously tracks robot position from SMARC topics
+   - Periodically pings a single target at configurable intervals
+   - Publishes distance measurements to configurable topics
+   - Decoupled position tracking and acoustic ranging operations
+
 ### Standalone Scripts
 
 The package includes standalone Python scripts for direct modem interaction:
@@ -126,6 +132,9 @@ ros2 launch serial_ping_pkg serial_ping_node.launch
 
 # Position broadcast node
 ros2 launch serial_ping_pkg smarc_pos_broadcast_node.launch
+
+# Single target ping node
+ros2 launch serial_ping_pkg single_target_ping_node.launch timeout_threshold:=0.5 ping_command:=\$P001 timer_period:=0.5 robot_name:=julian_stick
 
 # Leader-follower system
 ros2 launch serial_ping_pkg informed_leader_node.launch
