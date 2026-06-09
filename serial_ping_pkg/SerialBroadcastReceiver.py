@@ -9,11 +9,13 @@ class SerialBroadcastReceiver(Node):
     def __init__(self):
         super().__init__('SerialBroadcastReceiver')
 
-        # Declare and get 'port' parameter
+        # Declare and get 'port' and 'baudrate' parameters
         self.declare_parameter('port', '/dev/ttyUSB0')
+        self.declare_parameter('baudrate', 9600)
         port = self.get_parameter('port').get_parameter_value().string_value
-                
-        self.ser = serial.Serial(port, 9600, timeout=1)
+        baudrate = self.get_parameter('baudrate').get_parameter_value().integer_value
+
+        self.ser = serial.Serial(port, baudrate, timeout=1)
         self.buffer = ""
         self.timer = self.create_timer(0.5, self.read_serial)
 

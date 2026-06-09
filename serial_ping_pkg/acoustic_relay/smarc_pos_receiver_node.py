@@ -9,14 +9,21 @@ class SmarcPosReceiverNode(Node):
     def __init__(self):
         super().__init__('smarc_pos_receiver_node')
 
-        # Load config from YAML
+        # Load config from YAML (used only as defaults for the declared params)
         config = load_yaml_config('serial_ping_pkg', 'serial_config.yaml')
         pos_receiver_cfg = config.get('pos_receiver', {})
         serial_cfg = config.get('serial', {})
 
-        self.port = serial_cfg.get('port', '/dev/ttyUSB0')
-        self.port_fallback = serial_cfg.get('port_fallback', '/dev/ttyUSB1')
-        self.baudrate = serial_cfg.get('baudrate', 9600)
+        # Declare serial params with YAML values as defaults so they can be
+        # overridden from the launch file (e.g. serial_port:=/dev/ttyUSB2,
+        # serial_baudrate:=115200 for the new hardware stack).
+        self.declare_parameter('serial.port', serial_cfg.get('port', '/dev/ttyUSB0'))
+        self.declare_parameter('serial.port_fallback', serial_cfg.get('port_fallback', '/dev/ttyUSB1'))
+        self.declare_parameter('serial.baudrate', serial_cfg.get('baudrate', 9600))
+
+        self.port = self.get_parameter('serial.port').get_parameter_value().string_value
+        self.port_fallback = self.get_parameter('serial.port_fallback').get_parameter_value().string_value
+        self.baudrate = self.get_parameter('serial.baudrate').get_parameter_value().integer_value
 
         self.ser = init_serial(self.port, self.port_fallback, self.baudrate, self.get_logger())
         if self.ser is None:
