@@ -180,22 +180,129 @@ a launch argument.
 
 ## Launch
 
+> Launch **argument** names differ from the internal parameter names (e.g. the
+> launch arg `robot_name` maps to the param `leader.robot_name`, `own_modem_id`
+> → `teensy.own_modem_id`). Use the launch-argument names below on the command
+> line. Anything you set on the launch file **overrides** the YAML config, so
+> these args are the effective source of truth for a launched run.
+
+### Leader (transmitter) — every argument, shown at its default
+
 ```bash
-# Follower / receiver (defaults: /dev/ttyACM0 @ 115200)
-ros2 launch serial_ping_pkg owtt_follower_node.launch
-
-# Leader / transmitter, first in the round-robin, broadcasting every 4 s
 ros2 launch serial_ping_pkg owtt_leader_node.launch \
-    robot_name:=lolo listen_for_modem_id:=000 broadcast_interval_s:=4
-
-# Second leader: only starts after hearing modem 007
-ros2 launch serial_ping_pkg owtt_leader_node.launch \
-    robot_name:=sam listen_for_modem_id:=007 broadcast_interval_s:=4
-
-# Override the OWTT offset / port at runtime
-ros2 launch serial_ping_pkg owtt_follower_node.launch \
-    owtt_offset_us:=12345.0 serial_port:=/dev/ttyACM2
-
-# "Switch off" the Teensy and talk to the modem transparently
-ros2 launch serial_ping_pkg owtt_follower_node.launch mode:=wire
+    serial_port:=/dev/ttyACM0 \
+    serial_port_fallback:=/dev/ttyACM1 \
+    serial_baudrate:=115200 \
+    own_modem_id:=007 \
+    listen_for_modem_id:=000 \
+    broadcast_interval_s:=1 \
+    robot_name:='' \
+    latlon_topic:='' \
+    base_frame:='' \
+    modem_frame:='' \
+    base_link_suffix:=base_link \
+    modem_link_suffix:=modem_link \
+    world_frame:=map \
+    send_period_s:=1.0 \
+    mode:=transmitter \
+    command_terminator:=$'\r\n'
 ```
+
+| Arg | Default | Notes |
+|-----|---------|-------|
+| `serial_port` | `/dev/ttyACM0` | Teensy device (FTDI cables enumerate as `/dev/ttyUSB*`) |
+| `serial_port_fallback` | `/dev/ttyACM1` | tried if primary fails to open |
+| `serial_baudrate` | `115200` | Teensy link baud |
+| `own_modem_id` | `007` | this leader's modem address → `$Y007T…` |
+| `listen_for_modem_id` | `000` | `000` = go first; else wait to hear this modem id |
+| `broadcast_interval_s` | `1` | broadcast cadence in PPS/holdover epochs (1–4) |
+| `robot_name` | `''` | empty → derive topic from the auto-discovered base frame; leaders are never `lolo` |
+| `latlon_topic` | `''` | empty → `/<robot_name>/smarc/latlon` |
+| `base_frame` | `''` | empty → auto-discover the single `*base_link` frame |
+| `modem_frame` | `''` | empty → auto-discover the single `*modem_link` frame |
+| `base_link_suffix` | `base_link` | suffix used for base-frame auto-discovery |
+| `modem_link_suffix` | `modem_link` | suffix used for modem-frame auto-discovery |
+| `world_frame` | `map` | world/odom frame for orientation lookup |
+| `send_period_s` | `1.0` | how often the node pushes `$G` to the Teensy |
+| `mode` | `transmitter` | `transmitter` or `wire` (passive passthrough) |
+| `command_terminator` | `\r\n` | appended to every Teensy command; rarely changed |
+
+### Follower (receiver) — every argument, shown at its default
+
+```bash
+ros2 launch serial_ping_pkg owtt_follower_node.launch \
+    serial_port:=/dev/ttyACM0 \
+    serial_port_fallback:=/dev/ttyACM1 \
+    serial_baudrate:=115200 \
+    owtt_delta_prefix:=#I \
+    owtt_offset_us:=0.0 \
+    default_sound_velocity:=1500.0 \
+    sound_velocity_topic:=/lolo/sensors/svs \
+    sound_velocity_msg_type:=svs_interfaces/msg/SVS \
+    sound_velocity_field:=svs \
+    leader_gps_msg_type:=GeoPoint \
+    leader1_name:=leader1 \
+    leader1_modem_id:=007 \
+    leader2_name:=leader2 \
+    leader2_modem_id:=111 \
+    own_modem_id:=101 \
+    mode:=receiver \
+    command_terminator:=$'\r\n'
+```
+
+| Arg | Default | Notes |
+|-----|---------|-------|
+| `serial_port` | `/dev/ttyACM0` | Teensy device |
+| `serial_port_fallback` | `/dev/ttyACM1` | tried if primary fails to open |
+| `serial_baudrate` | `115200` | Teensy link baud |
+| `owtt_delta_prefix` | `#I` | Teensy OWTT delta line prefix |
+| `owtt_offset_us` | `0.0` | constant offset subtracted from the delta (µs) |
+| `default_sound_velocity` | `1500.0` | fallback sound speed (m/s) |
+| `sound_velocity_topic` | `/lolo/sensors/svs` | live SVS topic; empty `''` disables the subscription |
+| `sound_velocity_msg_type` | `svs_interfaces/msg/SVS` | SVS message type |
+| `sound_velocity_field` | `svs` | field on the SVS msg holding m/s |
+| `leader_gps_msg_type` | `GeoPoint` | `GeoPoint` or `NavSatFix` for published leader position |
+| `leader1_name` | `leader1` | first leader's name → topics `/leader1/...` |
+| `leader1_modem_id` | `007` | first leader's modem id (string; quote if leading zeros) |
+| `leader2_name` | `leader2` | second leader's name → topics `/leader2/...` |
+| `leader2_modem_id` | `111` | second leader's modem id |
+| `own_modem_id` | `101` | this receiver's modem address → `$Y101R` |
+| `mode` | `receiver` | `receiver` or `wire` (passive passthrough) |
+| `command_terminator` | `\r\n` | appended to every Teensy command; rarely changed |
+
+### Common recipes
+
+```bash
+# Bare defaults (Teensy on /dev/ttyACM0 @ 115200)
+ros2 launch serial_ping_pkg owtt_follower_node.launch
+ros2 launch serial_ping_pkg owtt_leader_node.launch robot_name:=leader1
+
+# Real bring-up over an FTDI USB-RS232 cable (enumerates as ttyUSB), leader1
+ros2 launch serial_ping_pkg owtt_leader_node.launch \
+    serial_port:=/dev/ttyUSB0 serial_port_fallback:=/dev/ttyUSB0 \
+    robot_name:=leader1
+
+# Leader, broadcast every 4 epochs, faster GPS push to the Teensy
+ros2 launch serial_ping_pkg owtt_leader_node.launch \
+    robot_name:=leader1 broadcast_interval_s:=4 send_period_s:=0.5
+
+# Second leader: only starts broadcasting after hearing modem 007
+ros2 launch serial_ping_pkg owtt_leader_node.launch \
+    robot_name:=sam own_modem_id:=011 listen_for_modem_id:=007
+
+# Follower with a calibrated OWTT offset and a custom leader-id map
+ros2 launch serial_ping_pkg owtt_follower_node.launch \
+    owtt_offset_us:=12345.0 \
+    leader1_name:=sam leader1_modem_id:=011 \
+    leader2_name:=leader1 leader2_modem_id:=007
+
+# Follower without a live SVS feed (force the 1500 m/s default)
+ros2 launch serial_ping_pkg owtt_follower_node.launch sound_velocity_topic:=''
+
+# "Switch off" the Teensy and talk to the modem transparently (either node)
+ros2 launch serial_ping_pkg owtt_follower_node.launch mode:=wire
+ros2 launch serial_ping_pkg owtt_leader_node.launch mode:=wire
+```
+
+> To stop either node, press **Ctrl-C** — this always resets the Teensy back to
+> wire mode (`$YW`) before exiting.
