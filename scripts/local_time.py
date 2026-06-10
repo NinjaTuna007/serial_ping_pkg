@@ -25,7 +25,7 @@ with open('./data/response_passive.csv', mode='a', newline='') as file:
 
         print(f"Iteration {_ + 1}")
 
-        ser.write(command.encode())
+        ser.write((command + "\r\n").encode())
         time.sleep(1)
         response = ser.read(ser.in_waiting)
         print(f"Ping Response: {response.decode('utf-8')}")
@@ -39,7 +39,7 @@ with open('./data/response_passive.csv', mode='a', newline='') as file:
         
         scream = "$B04DOIT"
 
-        ser.write(scream.encode())
+        ser.write((scream + "\r\n").encode())
         print(f"Sent: {scream}")
 
         # Wait for the complete message

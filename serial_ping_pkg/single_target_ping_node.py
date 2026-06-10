@@ -88,7 +88,7 @@ class SingleTargetPingNode(Node):
         
         try:
             ping_time = time.time()
-            self.ser.write(self.ping_command.encode())
+            self.ser.write((self.ping_command + "\r\n").encode())
             
             read_so_far = ""
             timed_out = False

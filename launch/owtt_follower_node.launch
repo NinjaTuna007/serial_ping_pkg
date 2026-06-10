@@ -43,6 +43,6 @@
         <param name="follower.leader2_modem_id" type="str" value="$(var leader2_modem_id)"/>
         <param name="teensy.own_modem_id" type="str" value="$(var own_modem_id)"/>
         <param name="teensy.mode" value="$(var mode)"/>
-        <param name="teensy.command_terminator" value="$(var command_terminator)"/>
+        <param name="teensy.command_terminator" type="str" value="$(var command_terminator)"/>
     </node>
 </launch>

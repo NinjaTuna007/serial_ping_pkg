@@ -21,7 +21,7 @@ teensy:
   # starts broadcasting. "000" means "go first" (do not wait for anyone).
   listen_for_modem_id: "000"
   # Broadcast cadence as a multiple of the PPS, in seconds (1, 2, 3 or 4).
-  broadcast_interval_s: 4
+  broadcast_interval_s: 1
   config_command_prefix: "$Y"
   # Terminator appended to commands written to the Teensy ($Y, $G, pass-through).
   command_terminator: "\r\n"

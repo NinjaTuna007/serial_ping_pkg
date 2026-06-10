@@ -121,7 +121,7 @@ class InformedLeaderNode(Node):
         self.get_logger().info(f"Sending ping command: {self.ping_command}")
         try:
             ping_time = time.time()
-            self.ser.write(self.ping_command.encode())
+            self.ser.write((self.ping_command + "\r\n").encode())
             read_so_far = ""
             while True:
                 if time.time() - ping_time > self.timeout_threshold:

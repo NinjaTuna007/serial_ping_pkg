@@ -58,7 +58,7 @@ class SerialPingNode(Node):
 
         try:
             self.ping_time = time.time()
-            self.ser.write(self.command.encode())
+            self.ser.write((self.command + "\r\n").encode())
             read_so_far = ""
             while True:
                 if time.time() - self.ping_time > self.timeout_threshold:

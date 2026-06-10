@@ -81,7 +81,7 @@ class SmarcPosBroadcastNode(Node):
         n_chars = len(data) + len(depth_str) + len(heading_str)
         out_str = f"$B{n_chars}{data}{depth_str}{heading_str}"
         try:
-            self.ser.write(out_str.encode())
+            self.ser.write((out_str + "\r\n").encode())
             self.get_logger().info(f"Broadcasted: {out_str}")
         except Exception as e:
             self.get_logger().error(f"Serial communication error: {e}")

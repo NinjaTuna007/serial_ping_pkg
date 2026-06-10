@@ -7,7 +7,7 @@ def send_and_get_response(send_cmd, get_response, cmd = "None"):
     if send_cmd == 1:
         command = cmd
         print(f"Sending command : {command}")
-        ser.write(command.encode())
+        ser.write((command + "\r\n").encode())
 
     if get_response == 1:
         time.sleep(0.5)

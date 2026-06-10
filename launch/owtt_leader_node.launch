@@ -41,6 +41,6 @@
         <param name="leader.world_frame" value="$(var world_frame)"/>
         <param name="leader.send_period_s" value="$(var send_period_s)"/>
         <param name="teensy.mode" value="$(var mode)"/>
-        <param name="teensy.command_terminator" value="$(var command_terminator)"/>
+        <param name="teensy.command_terminator" type="str" value="$(var command_terminator)"/>
     </node>
 </launch>
