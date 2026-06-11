@@ -4,15 +4,17 @@ import math
 import re
 from enum import Enum
 
+import numpy as np
 import rclpy
 from rclpy.time import Time
 from rclpy.duration import Duration
 
 from geographic_msgs.msg import GeoPoint, GeoPointStamped
 from geometry_msgs.msg import Point
-from sensor_msgs.msg import NavSatFix
+from std_msgs.msg import Float32
 from visualization_msgs.msg import Marker, MarkerArray
 
+from geodesy import utm as geo_utm
 from tf2_geometry_msgs import do_transform_point
 from tf2_ros import Buffer, TransformListener
 
@@ -30,15 +32,264 @@ class PingState(Enum):
     DONE = 2
 
 
+class LeastSquaresRangeEstimator:
+    """
+    Sliding-window range-only nonlinear least-squares estimator.
+
+    Measurement model:
+        range_i = || p_remote - p_own_i ||
+
+    If z_remote is known, only x,y are estimated and z is fixed.
+    If z_remote is None, full x,y,z are estimated.
+    """
+
+    def __init__(
+        self,
+        modem_id: str,
+        z_remote: float | None,
+        max_measurements: int,
+        range_sigma_m: float,
+        remote_depth_sigma_m: float,
+        damping: float,
+        max_iterations: int,
+        outlier_gate_m: float,
+    ):
+        self.modem_id = modem_id
+        self.z_remote = z_remote
+        self.max_measurements = max_measurements
+        self.range_sigma_m = range_sigma_m
+        self.remote_depth_sigma_m = remote_depth_sigma_m
+        self.damping = damping
+        self.max_iterations = max_iterations
+        self.outlier_gate_m = outlier_gate_m
+
+        self.measurements: list[tuple[np.ndarray, float]] = []
+        self.last_xyz: np.ndarray | None = None
+        self.last_cov: np.ndarray | None = None
+
+    def add_measurement(self, own_xyz: np.ndarray, range_m: float):
+        self.measurements.append((np.asarray(own_xyz, dtype=float), float(range_m)))
+        self.measurements = self.measurements[-self.max_measurements:]
+
+    def estimate(self, min_measurements: int):
+        if len(self.measurements) < min_measurements:
+            return None, None
+
+        anchors = np.asarray([m[0] for m in self.measurements], dtype=float)
+        ranges = np.asarray([m[1] for m in self.measurements], dtype=float)
+
+        result = self._solve(anchors, ranges)
+        if result is None:
+            return None, None
+
+        xyz, cov, residuals = result
+
+        # One-pass outlier rejection. Keep it conservative; this is for obvious
+        # bad ranges, not heavy robust optimization.
+        if self.outlier_gate_m > 0.0 and len(residuals) >= min_measurements + 2:
+            keep = np.abs(residuals) <= self.outlier_gate_m
+            if np.count_nonzero(keep) >= min_measurements and not np.all(keep):
+                result2 = self._solve(anchors[keep], ranges[keep])
+                if result2 is not None:
+                    xyz, cov, residuals = result2
+
+        self.last_xyz = xyz
+        self.last_cov = cov
+        return xyz, cov
+
+    def _solve(self, anchors: np.ndarray, ranges: np.ndarray):
+        known_z = self.z_remote is not None
+
+        if self.last_xyz is not None:
+            x = self.last_xyz[:2].copy() if known_z else self.last_xyz.copy()
+        else:
+            x = np.mean(anchors[:, :2], axis=0) if known_z else np.mean(anchors, axis=0)
+
+        J = None
+        residuals = None
+
+        for _ in range(self.max_iterations):
+            residuals_list = []
+            jac_rows = []
+
+            for a, r_meas in zip(anchors, ranges):
+                if known_z:
+                    dx = x[0] - a[0]
+                    dy = x[1] - a[1]
+                    dz = float(self.z_remote) - a[2]
+                    pred = math.sqrt(dx * dx + dy * dy + dz * dz)
+                    pred = max(pred, 1e-6)
+
+                    residuals_list.append(pred - r_meas)
+                    jac_rows.append([dx / pred, dy / pred])
+                else:
+                    d = x - a
+                    pred = max(float(np.linalg.norm(d)), 1e-6)
+
+                    residuals_list.append(pred - r_meas)
+                    jac_rows.append((d / pred).tolist())
+
+            residuals = np.asarray(residuals_list, dtype=float)
+            J = np.asarray(jac_rows, dtype=float)
+
+            H = J.T @ J + self.damping * np.eye(J.shape[1])
+            g = J.T @ residuals
+
+            try:
+                step = -np.linalg.solve(H, g)
+            except np.linalg.LinAlgError:
+                return None
+
+            x = x + step
+
+            if np.linalg.norm(step) < 1e-3:
+                break
+
+        if J is None or residuals is None:
+            return None
+
+        try:
+            cov_state = (self.range_sigma_m ** 2) * np.linalg.inv(J.T @ J)
+        except np.linalg.LinAlgError:
+            return None
+
+        if known_z:
+            xyz = np.array([x[0], x[1], float(self.z_remote)], dtype=float)
+            cov = np.zeros((3, 3), dtype=float)
+            cov[:2, :2] = cov_state
+            cov[2, 2] = self.remote_depth_sigma_m ** 2
+        else:
+            xyz = np.asarray(x, dtype=float)
+            cov = cov_state
+
+        return xyz, cov, residuals
+
+
+class EkfRangeEstimator:
+    """
+    Static-beacon EKF for range-only measurements.
+
+    State:
+        x = [remote_x, remote_y, remote_z]
+
+    If z_remote is known, z is clamped after every update.
+    EKF is initialized from a bootstrap least-squares estimator once enough
+    measurements exist. This avoids the usual garbage EKF initialization problem.
+    """
+
+    def __init__(
+        self,
+        modem_id: str,
+        z_remote: float | None,
+        range_sigma_m: float,
+        remote_depth_sigma_m: float,
+        process_noise_std_m: float,
+        initial_sigma_xy_m: float,
+        initial_sigma_z_m: float,
+        bootstrap_max_measurements: int,
+        bootstrap_damping: float,
+        bootstrap_iterations: int,
+    ):
+        self.modem_id = modem_id
+        self.z_remote = z_remote
+        self.range_sigma_m = range_sigma_m
+        self.remote_depth_sigma_m = remote_depth_sigma_m
+        self.process_noise_std_m = process_noise_std_m
+        self.initial_sigma_xy_m = initial_sigma_xy_m
+        self.initial_sigma_z_m = initial_sigma_z_m
+
+        self.x: np.ndarray | None = None
+        self.P: np.ndarray | None = None
+        self.measurement_count = 0
+
+        self.bootstrap = LeastSquaresRangeEstimator(
+            modem_id=modem_id,
+            z_remote=z_remote,
+            max_measurements=bootstrap_max_measurements,
+            range_sigma_m=range_sigma_m,
+            remote_depth_sigma_m=remote_depth_sigma_m,
+            damping=bootstrap_damping,
+            max_iterations=bootstrap_iterations,
+            outlier_gate_m=0.0,
+        )
+
+    def add_measurement(self, own_xyz: np.ndarray, range_m: float):
+        own_xyz = np.asarray(own_xyz, dtype=float)
+        range_m = float(range_m)
+
+        self.bootstrap.add_measurement(own_xyz, range_m)
+        self.measurement_count += 1
+
+        if self.x is None:
+            xyz, cov = self.bootstrap.estimate(min_measurements=4)
+            if xyz is None:
+                return
+            self._initialize(xyz)
+
+        assert self.x is not None
+        assert self.P is not None
+
+        # Static random-walk prediction.
+        q = self.process_noise_std_m ** 2
+        self.P = self.P + q * np.eye(3)
+
+        if self.z_remote is not None:
+            self.x[2] = float(self.z_remote)
+
+        d = self.x - own_xyz
+        pred = max(float(np.linalg.norm(d)), 1e-6)
+
+        H = (d / pred).reshape(1, 3)
+        R = np.array([[self.range_sigma_m ** 2]], dtype=float)
+
+        y = np.array([[range_m - pred]], dtype=float)
+        S = H @ self.P @ H.T + R
+        K = self.P @ H.T @ np.linalg.inv(S)
+
+        self.x = self.x + (K @ y).reshape(3)
+        self.P = (np.eye(3) - K @ H) @ self.P
+
+        if self.z_remote is not None:
+            self.x[2] = float(self.z_remote)
+            self.P[2, :] = 0.0
+            self.P[:, 2] = 0.0
+            self.P[2, 2] = self.remote_depth_sigma_m ** 2
+
+    def _initialize(self, xyz: np.ndarray):
+        self.x = np.asarray(xyz, dtype=float)
+        self.P = np.diag([
+            self.initial_sigma_xy_m ** 2,
+            self.initial_sigma_xy_m ** 2,
+            self.initial_sigma_z_m ** 2,
+        ]).astype(float)
+
+        if self.z_remote is not None:
+            self.x[2] = float(self.z_remote)
+            self.P[2, 2] = self.remote_depth_sigma_m ** 2
+
+    def estimate(self, min_measurements: int):
+        if self.x is None or self.P is None:
+            return None, None
+        if self.measurement_count < min_measurements:
+            return None, None
+        return self.x.copy(), self.P.copy()
+
+
 class ModemPingEstimatorNode(WireSafeSerialNode):
     """
-    Maintains a list of acoustic modem ids, pings them on request, and republishes
-    good-enough position estimates as GeoPointStamped.
+    Maintains a list of acoustic modem ids, pings them, converts two-way travel
+    time into range, and estimates underwater modem positions.
 
-    Expected estimator input:
-      sensor_msgs/NavSatFix
-      msg.header.frame_id = "modem_007" or "007"
-      msg.position_covariance gives uncertainty.
+    Action server modes:
+      {"mode": "add", "modem_id": "007", "depth_m": 12.0}
+      {"mode": "remove", "modem_id": "007"}
+      {"mode": "clear"}
+      {"mode": "ping", "retry_count": 3, "task_timeout_s": 180.0}
+
+    Output:
+      geographic_msgs/GeoPointStamped
+      header.frame_id = "modem_007"
+      position.latitude / longitude / altitude
     """
 
     def __init__(self):
@@ -48,56 +299,106 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         serial_cfg = config.get('serial', {})
         teensy_cfg = config.get('teensy', {})
         ping_cfg = config.get('ping', {})
-
+        estimator_cfg = config.get('estimator', {})
+        ls_cfg = estimator_cfg.get('least_squares', {})
+        ekf_cfg = estimator_cfg.get('ekf', {})
+        topics_cfg = config.get('topics', {})
 
         # ---------------- parameters ----------------
         self.declare_parameter('serial.port', serial_cfg.get('port', '/dev/ttyACM0'))
         self.declare_parameter('serial.port_fallback', serial_cfg.get('port_fallback', '/dev/ttyACM1'))
         self.declare_parameter('serial.baudrate', serial_cfg.get('baudrate', 115200))
 
+        self.declare_parameter('teensy.enable_wire_on_startup', teensy_cfg.get('enable_wire_on_startup', True))
         self.declare_parameter('teensy.own_modem_id', teensy_cfg.get('own_modem_id', '101'))
         self.declare_parameter('teensy.command_terminator', teensy_cfg.get('command_terminator', '\r\n'))
 
-        self.declare_parameter('estimate_topic', '/modem_estimator/fix')
-        self.declare_parameter('estimate_max_uncertainty_m', 4.0)
-        self.declare_parameter('require_successful_ping_before_publish', True)
-
-        self.declare_parameter('ping_response_timeout_s', 5.0)
-        self.declare_parameter('default_retry_count', 3)
-        self.declare_parameter('default_task_timeout_s', 60.0)
-
-        self.declare_parameter('map_frame', 'M350/map')
-        self.declare_parameter('marker_topic', '/modem_estimates/rviz')
-        self.declare_parameter('geopoint_topic', '/modem_estimates/geopoint')
-
-        self.port = self.get_parameter('serial.port').get_parameter_value().string_value
-        self.port_fallback = self.get_parameter('serial.port_fallback').get_parameter_value().string_value
-        self.baudrate = self.get_parameter('serial.baudrate').get_parameter_value().integer_value
-
-        self.own_modem_id = self.get_parameter('teensy.own_modem_id').get_parameter_value().string_value
-        self.command_terminator = self.get_parameter('teensy.command_terminator').get_parameter_value().string_value
-
-        self.estimate_topic = self.get_parameter('estimate_topic').get_parameter_value().string_value
-        self.max_uncertainty_m = self.get_parameter('estimate_max_uncertainty_m').get_parameter_value().double_value
-        self.require_ping_success = self.get_parameter(
-            'require_successful_ping_before_publish'
-        ).get_parameter_value().bool_value
-
-        self.ping_response_timeout_s = self.get_parameter('ping_response_timeout_s').get_parameter_value().double_value
-        self.default_retry_count = self.get_parameter('default_retry_count').get_parameter_value().integer_value
-        self.default_task_timeout_s = self.get_parameter('default_task_timeout_s').get_parameter_value().double_value
-
-        self.map_frame = self.get_parameter('map_frame').get_parameter_value().string_value
-        self.marker_topic = self.get_parameter('marker_topic').get_parameter_value().string_value
-        self.geopoint_topic = self.get_parameter('geopoint_topic').get_parameter_value().string_value
-
         self.declare_parameter('ping.max_retries', ping_cfg.get('max_retries', 3))
-        self.declare_parameter('ping.response_timeout_s', ping_cfg.get('response_timeout_s', 5.0))
-        self.declare_parameter('ping.task_timeout_s', ping_cfg.get('task_timeout_s', 60.0))
+        self.declare_parameter('ping.response_timeout_s', ping_cfg.get('response_timeout_s', 8.0))
+        self.declare_parameter('ping.task_timeout_s', ping_cfg.get('task_timeout_s', 180.0))
+        self.declare_parameter('ping.cycle_until_estimated', ping_cfg.get('cycle_until_estimated', True))
 
-        self.default_retry_count = self.get_parameter('ping.max_retries').value
-        self.ping_response_timeout_s = self.get_parameter('ping.response_timeout_s').value
-        self.default_task_timeout_s = self.get_parameter('ping.task_timeout_s').value
+        self.declare_parameter('estimator.method', estimator_cfg.get('method', 'least_squares'))
+        self.declare_parameter('estimator.default_sound_velocity', estimator_cfg.get('default_sound_velocity', 1500.0))
+        self.declare_parameter('estimator.sound_velocity_topic', estimator_cfg.get('sound_velocity_topic', '/lolo/sensors/svs'))
+        self.declare_parameter('estimator.sound_velocity_msg_type', estimator_cfg.get('sound_velocity_msg_type', 'svs_interfaces/msg/SVS'))
+        self.declare_parameter('estimator.sound_velocity_field', estimator_cfg.get('sound_velocity_field', 'svs'))
+
+        self.declare_parameter('estimator.range_sigma_m', estimator_cfg.get('range_sigma_m', 1.0))
+        self.declare_parameter('estimator.own_position_sigma_m', estimator_cfg.get('own_position_sigma_m', 1.0))
+        self.declare_parameter('estimator.own_depth_sigma_m', estimator_cfg.get('own_depth_sigma_m', 0.3))
+        self.declare_parameter('estimator.remote_depth_sigma_m', estimator_cfg.get('remote_depth_sigma_m', 0.5))
+
+        self.declare_parameter('estimator.min_measurements', estimator_cfg.get('min_measurements', 4))
+        self.declare_parameter('estimator.max_measurements', estimator_cfg.get('max_measurements', 40))
+        self.declare_parameter('estimator.max_position_uncertainty_m', estimator_cfg.get('max_position_uncertainty_m', 5.0))
+        self.declare_parameter('estimator.use_known_remote_depth', estimator_cfg.get('use_known_remote_depth', True))
+
+        self.declare_parameter('estimator.least_squares.max_iterations', ls_cfg.get('max_iterations', 20))
+        self.declare_parameter('estimator.least_squares.damping', ls_cfg.get('damping', 0.001))
+        self.declare_parameter('estimator.least_squares.outlier_gate_m', ls_cfg.get('outlier_gate_m', 10.0))
+
+        self.declare_parameter('estimator.ekf.process_noise_std_m', ekf_cfg.get('process_noise_std_m', 0.05))
+        self.declare_parameter('estimator.ekf.initial_sigma_xy_m', ekf_cfg.get('initial_sigma_xy_m', 50.0))
+        self.declare_parameter('estimator.ekf.initial_sigma_z_m', ekf_cfg.get('initial_sigma_z_m', 2.0))
+
+        self.declare_parameter('topics.own_latlon_topic', topics_cfg.get('own_latlon_topic', '/lolo/smarc/latlon'))
+        self.declare_parameter('topics.own_depth_topic', topics_cfg.get('own_depth_topic', '/lolo/smarc/depth'))
+        self.declare_parameter('topics.own_position_max_age_s', topics_cfg.get('own_position_max_age_s', 3.0))
+        self.declare_parameter('topics.geopoint_topic', topics_cfg.get('geopoint_topic', '/modem_estimates/geopoint'))
+        self.declare_parameter('topics.marker_topic', topics_cfg.get('marker_topic', '/modem_estimates/rviz'))
+        self.declare_parameter('topics.map_frame', topics_cfg.get('map_frame', 'M350/map'))
+
+        # ---------------- parameter values ----------------
+        self.port = self.get_parameter('serial.port').value
+        self.port_fallback = self.get_parameter('serial.port_fallback').value
+        self.baudrate = int(self.get_parameter('serial.baudrate').value)
+
+        self.enable_wire_on_startup = bool(self.get_parameter('teensy.enable_wire_on_startup').value)
+        self.own_modem_id = str(self.get_parameter('teensy.own_modem_id').value).zfill(3)
+        self.command_terminator = self.get_parameter('teensy.command_terminator').value
+
+        self.default_retry_count = int(self.get_parameter('ping.max_retries').value)
+        self.ping_response_timeout_s = float(self.get_parameter('ping.response_timeout_s').value)
+        self.default_task_timeout_s = float(self.get_parameter('ping.task_timeout_s').value)
+        self.cycle_until_estimated = bool(self.get_parameter('ping.cycle_until_estimated').value)
+
+        self.estimator_method = str(self.get_parameter('estimator.method').value).lower()
+        self.default_sound_velocity = float(self.get_parameter('estimator.default_sound_velocity').value)
+        self.sound_velocity = self.default_sound_velocity
+        self.sound_velocity_topic = self.get_parameter('estimator.sound_velocity_topic').value
+        self.sound_velocity_msg_type = self.get_parameter('estimator.sound_velocity_msg_type').value
+        self.sound_velocity_field = self.get_parameter('estimator.sound_velocity_field').value
+
+        self.range_sigma_m = float(self.get_parameter('estimator.range_sigma_m').value)
+        self.own_position_sigma_m = float(self.get_parameter('estimator.own_position_sigma_m').value)
+        self.own_depth_sigma_m = float(self.get_parameter('estimator.own_depth_sigma_m').value)
+        self.remote_depth_sigma_m = float(self.get_parameter('estimator.remote_depth_sigma_m').value)
+
+        # Effective range sigma: simple conservative lumping of range and own-position uncertainty.
+        self.effective_range_sigma_m = math.sqrt(
+            self.range_sigma_m ** 2 + self.own_position_sigma_m ** 2
+        )
+
+        self.min_measurements = int(self.get_parameter('estimator.min_measurements').value)
+        self.max_measurements = int(self.get_parameter('estimator.max_measurements').value)
+        self.max_position_uncertainty_m = float(self.get_parameter('estimator.max_position_uncertainty_m').value)
+        self.use_known_remote_depth = bool(self.get_parameter('estimator.use_known_remote_depth').value)
+
+        self.ls_max_iterations = int(self.get_parameter('estimator.least_squares.max_iterations').value)
+        self.ls_damping = float(self.get_parameter('estimator.least_squares.damping').value)
+        self.ls_outlier_gate_m = float(self.get_parameter('estimator.least_squares.outlier_gate_m').value)
+
+        self.ekf_process_noise_std_m = float(self.get_parameter('estimator.ekf.process_noise_std_m').value)
+        self.ekf_initial_sigma_xy_m = float(self.get_parameter('estimator.ekf.initial_sigma_xy_m').value)
+        self.ekf_initial_sigma_z_m = float(self.get_parameter('estimator.ekf.initial_sigma_z_m').value)
+
+        self.own_latlon_topic = self.get_parameter('topics.own_latlon_topic').value
+        self.own_depth_topic = self.get_parameter('topics.own_depth_topic').value
+        self.own_position_max_age_s = float(self.get_parameter('topics.own_position_max_age_s').value)
+        self.geopoint_topic = self.get_parameter('topics.geopoint_topic').value
+        self.marker_topic = self.get_parameter('topics.marker_topic').value
+        self.map_frame = self.get_parameter('topics.map_frame').value
 
         # ---------------- serial ----------------
         self.ser = init_serial(self.port, self.port_fallback, self.baudrate, self.get_logger())
@@ -107,11 +408,16 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         self.install_shutdown_guard()
 
-        # This node uses classic Succorfish commands, so put Teensy in wire mode.
-        self.send_command(ti.build_config_command(ti.TeensyMode.WIRE, self.own_modem_id))
+        # Optional: put Teensy bridge into transparent wire mode.
+        # If the serial target is a raw modem, this may just return E; harmless.
+        if self.enable_wire_on_startup:
+            self.send_command(ti.build_config_command(ti.TeensyMode.WIRE, self.own_modem_id))
 
         # ---------------- state ----------------
         self.modem_ids: list[str] = []
+        self.modem_depths: dict[str, float] = {}       # depth positive down [m]
+        self.estimators = {}                           # modem_id -> estimator
+        self.estimate_done: set[str] = set()
 
         self.state = PingState.IDLE
         self.action_done = True
@@ -119,6 +425,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         self.ping_queue: list[str] = []
         self.attempts_left: dict[str, int] = {}
+        self.attempt_budget = self.default_retry_count + 1
         self.ping_success: set[str] = set()
         self.ping_failed: set[str] = set()
 
@@ -128,27 +435,33 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         self.serial_buffer = ""
 
-        # Latest good estimates, keyed by modem id.
         self.good_estimates: dict[str, GeoPointStamped] = {}
         self.estimate_uncertainty: dict[str, float] = {}
 
-        # tf / visualization
+        self.latest_own_latlon: GeoPoint | None = None
+        self.latest_own_latlon_time = None
+        self.latest_own_depth_m: float | None = None
+        self.latest_own_depth_time = None
+
+        self.utm_zone = None
+        self.utm_band = None
         self.utm_frame: str | None = None
+
+        # tf / visualization
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # ---------------- ROS I/O ----------------
-        self.estimate_sub = self.create_subscription(
-            NavSatFix,
-            self.estimate_topic,
-            self._estimate_cb,
-            10,
-        )
+        self.create_subscription(GeoPoint, self.own_latlon_topic, self._own_latlon_cb, 10)
+
+        if self.own_depth_topic:
+            self.create_subscription(Float32, self.own_depth_topic, self._own_depth_cb, 10)
+
+        self._setup_sound_velocity_subscription()
 
         self.geopoint_pub = self.create_publisher(GeoPointStamped, self.geopoint_topic, 10)
         self.marker_pub = self.create_publisher(MarkerArray, self.marker_topic, 10)
 
-        # One action server with three modes: add/remove/ping.
         self.start_as = GentlerActionServer(
             self,
             "smarc_modem_ping",
@@ -160,7 +473,6 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             loop_frequency=10,
         )
 
-        # Stop action: drops all modem ids.
         self.stop_as = GentlerActionServer(
             self,
             "smarc_stop_modem_ping",
@@ -173,8 +485,33 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         )
 
         self.get_logger().info(
-            f"modem_ping_estimator_node ready. estimate_topic={self.estimate_topic}, "
+            f"modem_ping_estimator_node ready. method={self.estimator_method}, "
+            f"own_latlon={self.own_latlon_topic}, own_depth={self.own_depth_topic}, "
             f"output={self.geopoint_topic}, markers={self.marker_topic}"
+        )
+
+    # ------------------------------------------------------------------ setup
+
+    def _setup_sound_velocity_subscription(self):
+        if not self.sound_velocity_topic:
+            self.get_logger().warn(
+                f"No sound velocity topic configured; using default {self.default_sound_velocity:.1f} m/s."
+            )
+            return
+
+        try:
+            MsgType = ti.import_message_type(self.sound_velocity_msg_type)
+        except Exception as e:
+            self.get_logger().warn(
+                f"Sound velocity msg type '{self.sound_velocity_msg_type}' unavailable ({e}); "
+                f"using default {self.default_sound_velocity:.1f} m/s."
+            )
+            return
+
+        self.create_subscription(MsgType, self.sound_velocity_topic, self._sound_velocity_cb, 10)
+        self.get_logger().info(
+            f"Subscribed to sound velocity: {self.sound_velocity_topic}, "
+            f"type={self.sound_velocity_msg_type}, field={self.sound_velocity_field}"
         )
 
     # ------------------------------------------------------------------ actions
@@ -187,11 +524,22 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             if modem_id is None:
                 return False
 
+            if 'depth_m' in goal_request and goal_request['depth_m'] is not None:
+                self.modem_depths[modem_id] = float(goal_request['depth_m'])
+
             if modem_id not in self.modem_ids:
                 self.modem_ids.append(modem_id)
                 self.modem_ids.sort()
 
-            self.status_msg = f"added modem {modem_id}; list={self.modem_ids}"
+            # Rebuild estimator if depth changed or estimator did not exist.
+            self.estimators[modem_id] = self._make_estimator(modem_id)
+            self.estimate_done.discard(modem_id)
+            self.ping_failed.discard(modem_id)
+
+            self.status_msg = (
+                f"added modem {modem_id}, depth_m={self.modem_depths.get(modem_id)}, "
+                f"list={self.modem_ids}"
+            )
             self.action_done = True
             self.get_logger().info(self.status_msg)
             return True
@@ -201,23 +549,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             if modem_id is None:
                 return False
 
-            if modem_id in self.modem_ids:
-                self.modem_ids.remove(modem_id)
-
-            self.good_estimates.pop(modem_id, None)
-            self.estimate_uncertainty.pop(modem_id, None)
-            self.ping_success.discard(modem_id)
-            self.ping_failed.discard(modem_id)
-            self.attempts_left.pop(modem_id, None)
-
-            if self.waiting_for_id == modem_id:
-                self.waiting_for_id = None
-                self.ping_deadline = None
-
-            self.ping_queue = [mid for mid in self.ping_queue if mid != modem_id]
-
-            self._delete_marker_for_modem(modem_id)
-
+            self._remove_modem(modem_id)
             self.status_msg = f"removed modem {modem_id}; list={self.modem_ids}"
             self.action_done = True
             self.get_logger().info(self.status_msg)
@@ -237,21 +569,43 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             retry_count = int(goal_request.get('retry_count', self.default_retry_count))
             task_timeout_s = float(goal_request.get('task_timeout_s', self.default_task_timeout_s))
 
-            self._start_ping_task(
-                retry_count=retry_count,
-                task_timeout_s=task_timeout_s
-            )
+            self._start_ping_task(retry_count=retry_count, task_timeout_s=task_timeout_s)
             return True
 
         self.get_logger().error(f"Unknown modem ping action mode: {mode!r}")
         return False
-    
+
+    def _remove_modem(self, modem_id: str):
+        if modem_id in self.modem_ids:
+            self.modem_ids.remove(modem_id)
+
+        self.modem_depths.pop(modem_id, None)
+        self.estimators.pop(modem_id, None)
+        self.good_estimates.pop(modem_id, None)
+        self.estimate_uncertainty.pop(modem_id, None)
+
+        self.estimate_done.discard(modem_id)
+        self.ping_success.discard(modem_id)
+        self.ping_failed.discard(modem_id)
+        self.attempts_left.pop(modem_id, None)
+
+        if self.waiting_for_id == modem_id:
+            self.waiting_for_id = None
+            self.ping_deadline = None
+
+        self.ping_queue = [mid for mid in self.ping_queue if mid != modem_id]
+        self._delete_marker_for_modem(modem_id)
+
     def _clear_all_modems(self, reason: str = "cleared all modem ids"):
         self._cancel_ping_task(reason)
 
         self.modem_ids = []
+        self.modem_depths.clear()
+        self.estimators.clear()
+
         self.good_estimates.clear()
         self.estimate_uncertainty.clear()
+        self.estimate_done.clear()
 
         self.ping_queue = []
         self.attempts_left = {}
@@ -266,9 +620,8 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.state = PingState.IDLE
         self.action_done = True
         self.status_msg = reason
-
         self.get_logger().info(reason)
-        
+
     def _on_cancel_received(self):
         self._cancel_ping_task("cancelled")
         return True
@@ -286,14 +639,18 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
     # ------------------------------------------------------------------ ping task
 
     def _start_ping_task(self, retry_count: int, task_timeout_s: float):
-        # retry_count means retries after the first attempt.
-        # attempts_left = retry_count + 1.
-        attempts = max(1, retry_count + 1)
+        # retry_count = retries after the first attempt.
+        # attempt_budget = first attempt + retries.
+        self.attempt_budget = max(1, retry_count + 1)
 
         self.ping_queue = list(self.modem_ids)
-        self.attempts_left = {mid: attempts for mid in self.modem_ids}
+        self.attempts_left = {mid: self.attempt_budget for mid in self.modem_ids}
         self.ping_success = set()
         self.ping_failed = set()
+
+        # Keep old estimates if already good, but normally a new ping task should
+        # try to improve/reconfirm everything.
+        self.estimate_done = set()
 
         self.waiting_for_id = None
         self.ping_deadline = None
@@ -301,7 +658,10 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         self.state = PingState.RUNNING
         self.action_done = False
-        self.status_msg = f"pinging {self.modem_ids}, retries={retry_count}, timeout={task_timeout_s}s"
+        self.status_msg = (
+            f"ping/localize {self.modem_ids}, retries={retry_count}, "
+            f"timeout={task_timeout_s}s"
+        )
         self.get_logger().info(self.status_msg)
 
     def _cancel_ping_task(self, reason: str):
@@ -323,9 +683,10 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         if self.task_deadline is not None and now > self.task_deadline:
             self.state = PingState.DONE
             self.action_done = True
+            remaining = sorted(set(self.modem_ids) - self.estimate_done - self.ping_failed)
             self.status_msg = (
-                f"ping task timeout. success={sorted(self.ping_success)}, "
-                f"failed={sorted(self.ping_failed)}, remaining={self.ping_queue}"
+                f"ping task timeout. estimated={sorted(self.estimate_done)}, "
+                f"failed={sorted(self.ping_failed)}, remaining={remaining}"
             )
             self.get_logger().warn(self.status_msg)
             return
@@ -335,13 +696,13 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
                 self._handle_ping_timeout(self.waiting_for_id)
             return
 
-        # Done when everyone either succeeded or exhausted retries.
-        completed = self.ping_success | self.ping_failed
+        completed = self.estimate_done | self.ping_failed
+
         if set(self.modem_ids).issubset(completed):
             self.state = PingState.DONE
             self.action_done = True
             self.status_msg = (
-                f"ping complete. success={sorted(self.ping_success)}, "
+                f"ping/localization complete. estimated={sorted(self.estimate_done)}, "
                 f"failed={sorted(self.ping_failed)}"
             )
             if self.ping_failed:
@@ -350,11 +711,13 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
                 self.get_logger().info(self.status_msg)
             return
 
+        if not self.ping_queue:
+            self.ping_queue = [mid for mid in self.modem_ids if mid not in completed]
+
         if self.ping_queue:
             next_id = self.ping_queue.pop(0)
-            if next_id in completed:
-                return
-            self._send_ping(next_id)
+            if next_id not in completed:
+                self._send_ping(next_id)
 
     def _send_ping(self, modem_id: str):
         cmd = f"$P{modem_id}"
@@ -362,19 +725,35 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         self.waiting_for_id = modem_id
         self.ping_deadline = self.get_clock().now() + Duration(seconds=self.ping_response_timeout_s)
-        remaining = self.attempts_left.get(modem_id, 0)
+
+        remaining = self.attempts_left.get(modem_id, self.attempt_budget)
         self.status_msg = f"pinging {modem_id}, attempts_left={remaining}"
         self.get_logger().info(self.status_msg)
 
-    def _handle_ping_success(self, modem_id: str):
+    def _handle_ping_success(self, modem_id: str, range_m: float):
         self.ping_success.add(modem_id)
+
+        # Reset timeout budget on successful communication. This makes retries
+        # behave like consecutive timeout tolerance, not lifetime timeout count.
+        self.attempts_left[modem_id] = self.attempt_budget
+
+        own_xyz = self._current_own_modem_xyz()
+        if own_xyz is None:
+            self.get_logger().warn(
+                f"ping success {modem_id}, range={range_m:.2f}m, "
+                "but own xyz unavailable; measurement discarded"
+            )
+        else:
+            self._add_range_measurement(modem_id, own_xyz, range_m)
+
         self.waiting_for_id = None
         self.ping_deadline = None
-        self.status_msg = f"ping success {modem_id}"
+
+        self.status_msg = f"ping success {modem_id}, range={range_m:.2f}m"
         self.get_logger().info(self.status_msg)
 
     def _handle_ping_timeout(self, modem_id: str):
-        self.attempts_left[modem_id] = self.attempts_left.get(modem_id, 0) - 1
+        self.attempts_left[modem_id] = self.attempts_left.get(modem_id, self.attempt_budget) - 1
 
         if self.attempts_left[modem_id] > 0:
             self.get_logger().warn(
@@ -411,26 +790,30 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
     def _handle_serial_line(self, line: str):
         self.get_logger().debug(f"<- serial: {line}")
 
-        # Local echo/ack from ping command; ignore.
+        # Local ack/echo from ping command.
         # Example: $P007
         if line.startswith('$P'):
             return
 
         # Success:
         #   #R007T12345
-        if line.startswith('#R') and len(line) >= 5:
-            modem_id = line[2:5]
+        # Succorfish range formula:
+        #   range_m = ticks * c * 3.125e-5
+        m = re.match(r'^#R(\d{3})T(\d+)$', line)
+        if m:
+            modem_id = m.group(1)
+            ticks = int(m.group(2))
+            range_m = ticks * self.sound_velocity * 3.125e-5
+
             if self.waiting_for_id == modem_id:
-                self._handle_ping_success(modem_id)
+                self._handle_ping_success(modem_id, range_m)
             else:
                 self.get_logger().warn(
-                    f"got range response for {modem_id}, but waiting_for={self.waiting_for_id}"
+                    f"got range for {modem_id}, but waiting_for={self.waiting_for_id}"
                 )
             return
 
-        # Timeout from modem:
-        #   #TO
-        # It does not include id, so assign it to current waiting id.
+        # Timeout from modem. It does not include id, so assign to current wait.
         if line == '#TO':
             if self.waiting_for_id is not None:
                 self._handle_ping_timeout(self.waiting_for_id)
@@ -438,50 +821,191 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
                 self.get_logger().warn("got #TO but not waiting for any modem")
             return
 
-        # Modem address/config confirms from Teensy or classic modem lines.
-        if line.startswith('#A'):
+        # Config/status lines from Teensy or raw modem.
+        if line.startswith('#A') or line == 'E':
             self.get_logger().info(f"config/status line: {line}")
             return
 
         self.get_logger().debug(f"unhandled serial line: {line}")
 
-    # ------------------------------------------------------------------ estimates
+    # ------------------------------------------------------------------ own state
 
-    def _estimate_cb(self, msg: NavSatFix):
-        modem_id = self._modem_id_from_frame(msg.header.frame_id)
-        if modem_id is None:
+    def _own_latlon_cb(self, msg: GeoPoint):
+        self.latest_own_latlon = msg
+        self.latest_own_latlon_time = self.get_clock().now()
+
+        # Initialize UTM zone/band from own GPS.
+        try:
+            up = geo_utm.fromMsg(msg)
+            self.utm_zone = up.zone
+            self.utm_band = up.band
+        except Exception as e:
+            self.get_logger().warn(f"could not initialize UTM zone/band: {e}")
+
+    def _own_depth_cb(self, msg: Float32):
+        self.latest_own_depth_m = float(msg.data)
+        self.latest_own_depth_time = self.get_clock().now()
+
+    def _sound_velocity_cb(self, msg):
+        try:
+            self.sound_velocity = float(getattr(msg, self.sound_velocity_field))
+        except (AttributeError, TypeError, ValueError) as e:
             self.get_logger().warn(
-                f"estimate message has no modem id in frame_id={msg.header.frame_id!r}",
+                f"could not read sound velocity field '{self.sound_velocity_field}': {e}"
+            )
+
+    def _current_own_modem_xyz(self):
+        if self.latest_own_latlon is None or self.latest_own_latlon_time is None:
+            return None
+
+        now = self.get_clock().now()
+        max_age = Duration(seconds=self.own_position_max_age_s)
+
+        if self.latest_own_latlon_time + max_age < now:
+            self.get_logger().warn(
+                f"own latlon older than {self.own_position_max_age_s:.1f}s; not using range",
                 throttle_duration_sec=5.0,
             )
-            return
+            return None
 
+        gp = GeoPoint()
+        gp.latitude = float(self.latest_own_latlon.latitude)
+        gp.longitude = float(self.latest_own_latlon.longitude)
+
+        if self.latest_own_depth_m is not None:
+            gp.altitude = -float(self.latest_own_depth_m)
+        else:
+            gp.altitude = float(self.latest_own_latlon.altitude)
+
+        try:
+            up = geo_utm.fromMsg(gp)
+        except Exception as e:
+            self.get_logger().warn(f"could not convert own latlon to UTM: {e}")
+            return None
+
+        self.utm_zone = up.zone
+        self.utm_band = up.band
+
+        return np.array([
+            float(up.easting),
+            float(up.northing),
+            float(gp.altitude),
+        ], dtype=float)
+
+    # ------------------------------------------------------------------ estimator
+
+    def _make_estimator(self, modem_id: str):
+        z_remote = None
+
+        if self.use_known_remote_depth:
+            depth_m = self.modem_depths.get(modem_id)
+            if depth_m is None:
+                self.get_logger().warn(
+                    f"modem {modem_id} has no depth_m; falling back to full 3D estimate. "
+                    "This is weaker unless the own vehicle has good 3D geometry."
+                )
+            else:
+                # Depth is positive down, ENU altitude z is positive up.
+                z_remote = -float(depth_m)
+
+        if self.estimator_method == 'ekf':
+            return EkfRangeEstimator(
+                modem_id=modem_id,
+                z_remote=z_remote,
+                range_sigma_m=self.effective_range_sigma_m,
+                remote_depth_sigma_m=self.remote_depth_sigma_m,
+                process_noise_std_m=self.ekf_process_noise_std_m,
+                initial_sigma_xy_m=self.ekf_initial_sigma_xy_m,
+                initial_sigma_z_m=self.ekf_initial_sigma_z_m,
+                bootstrap_max_measurements=self.max_measurements,
+                bootstrap_damping=self.ls_damping,
+                bootstrap_iterations=self.ls_max_iterations,
+            )
+
+        return LeastSquaresRangeEstimator(
+            modem_id=modem_id,
+            z_remote=z_remote,
+            max_measurements=self.max_measurements,
+            range_sigma_m=self.effective_range_sigma_m,
+            remote_depth_sigma_m=self.remote_depth_sigma_m,
+            damping=self.ls_damping,
+            max_iterations=self.ls_max_iterations,
+            outlier_gate_m=self.ls_outlier_gate_m,
+        )
+
+    def _add_range_measurement(self, modem_id: str, own_xyz, range_m: float):
         if modem_id not in self.modem_ids:
             return
 
-        if self.require_ping_success and modem_id not in self.ping_success:
-            return
+        estimator = self.estimators.get(modem_id)
+        if estimator is None:
+            estimator = self._make_estimator(modem_id)
+            self.estimators[modem_id] = estimator
 
-        sigma = self._estimate_uncertainty_m(msg)
-        if sigma is None:
-            self.get_logger().warn(
-                f"estimate for modem {modem_id} has unknown covariance; ignoring",
-                throttle_duration_sec=5.0,
+        estimator.add_measurement(own_xyz, range_m)
+        xyz, cov = estimator.estimate(self.min_measurements)
+
+        if xyz is None or cov is None:
+            n = len(getattr(estimator, 'measurements', []))
+            if hasattr(estimator, 'bootstrap'):
+                n = len(estimator.bootstrap.measurements)
+            self.get_logger().info(
+                f"modem {modem_id}: range={range_m:.2f}m stored, "
+                f"waiting for estimate ({n}/{self.min_measurements} measurements)"
             )
             return
 
-        if sigma > self.max_uncertainty_m:
-            self.get_logger().debug(
-                f"estimate for modem {modem_id} too uncertain: {sigma:.2f} m"
+        sigma = self._position_uncertainty_from_cov(cov)
+
+        if sigma <= self.max_position_uncertainty_m:
+            self.estimate_done.add(modem_id)
+            self._publish_estimated_xyz(modem_id, xyz, sigma)
+        else:
+            self.get_logger().info(
+                f"modem {modem_id}: estimate not good enough yet, "
+                f"sigma={sigma:.2f}m > {self.max_position_uncertainty_m:.2f}m"
             )
+
+    def _position_uncertainty_from_cov(self, cov):
+        cov = np.asarray(cov, dtype=float)
+
+        if cov.shape[0] < 2 or cov.shape[1] < 2:
+            return float('inf')
+
+        cov_xy = cov[:2, :2]
+
+        try:
+            eigvals = np.linalg.eigvalsh(cov_xy)
+        except np.linalg.LinAlgError:
+            return float('inf')
+
+        return math.sqrt(max(float(np.max(eigvals)), 0.0))
+
+    # ------------------------------------------------------------------ publishing
+
+    def _publish_estimated_xyz(self, modem_id: str, xyz, sigma: float):
+        if self.utm_zone is None or self.utm_band is None:
+            self.get_logger().warn("UTM zone/band unknown; cannot publish GeoPoint estimate yet")
             return
+
+        xyz = np.asarray(xyz, dtype=float)
+
+        up = geo_utm.UTMPoint(
+            easting=float(xyz[0]),
+            northing=float(xyz[1]),
+            altitude=float(xyz[2]),
+            zone=self.utm_zone,
+            band=self.utm_band,
+        )
+
+        geo = up.toMsg()
 
         out = GeoPointStamped()
         out.header.stamp = self.get_clock().now().to_msg()
         out.header.frame_id = f"modem_{modem_id}"
-        out.position.latitude = float(msg.latitude)
-        out.position.longitude = float(msg.longitude)
-        out.position.altitude = float(msg.altitude)
+        out.position.latitude = float(geo.latitude)
+        out.position.longitude = float(geo.longitude)
+        out.position.altitude = float(xyz[2])
 
         self.good_estimates[modem_id] = out
         self.estimate_uncertainty[modem_id] = sigma
@@ -490,37 +1014,12 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self._publish_marker_for_estimate(modem_id, out, sigma)
 
         self.get_logger().info(
-            f"published good estimate for modem {modem_id}: "
-            f"lat={out.position.latitude:.8f}, lon={out.position.longitude:.8f}, sigma={sigma:.2f} m"
+            f"modem {modem_id} estimate: "
+            f"lat={out.position.latitude:.8f}, lon={out.position.longitude:.8f}, "
+            f"z={out.position.altitude:.2f}m, sigma={sigma:.2f}m"
         )
 
-    def _estimate_uncertainty_m(self, msg: NavSatFix) -> float | None:
-        # NavSatFix covariance layout:
-        # [xx, xy, xz,
-        #  yx, yy, yz,
-        #  zx, zy, zz]
-        if msg.position_covariance_type == NavSatFix.COVARIANCE_TYPE_UNKNOWN:
-            return None
-
-        var_x = float(msg.position_covariance[0])
-        var_y = float(msg.position_covariance[4])
-
-        if var_x < 0.0 or var_y < 0.0:
-            return None
-
-        # Conservative horizontal 1-sigma.
-        return math.sqrt(max(var_x, var_y))
-
-    def _modem_id_from_frame(self, frame_id: str) -> str | None:
-        # Accept "007", "modem_007", "modem/007", etc.
-        m = re.search(r'(\d{3})', frame_id or '')
-        if not m:
-            return None
-        modem_id = m.group(1)
-        value = int(modem_id)
-        if value < 0 or value > 255:
-            return None
-        return modem_id
+    # ------------------------------------------------------------------ helpers
 
     def _parse_goal_modem_id(self, goal_request: dict) -> str | None:
         raw = goal_request.get('modem_id', None)
@@ -557,11 +1056,10 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         sphere.pose.position = map_point
         sphere.pose.orientation.w = 1.0
 
-        # Show uncertainty footprint roughly as diameter.
         diameter = max(1.0, 2.0 * sigma)
         sphere.scale.x = diameter
         sphere.scale.y = diameter
-        sphere.scale.z = 1.0
+        sphere.scale.z = diameter
 
         sphere.color.r = 0.0
         sphere.color.g = 0.4
@@ -580,35 +1078,49 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         text.pose.position.z = map_point.z + 2.0
         text.pose.orientation.w = 1.0
         text.scale.z = 1.5
+
         text.color.r = 1.0
         text.color.g = 1.0
         text.color.b = 1.0
         text.color.a = 1.0
-        text.text = f"modem {modem_id}\nσ={sigma:.1f}m"
+
+        depth_m = -float(estimate.position.altitude)
+        text.text = f"modem {modem_id}\nσ={sigma:.1f}m\nz={estimate.position.altitude:.1f}m depth={depth_m:.1f}m"
 
         self.marker_pub.publish(MarkerArray(markers=[sphere, text]))
 
     def _delete_marker_for_modem(self, modem_id: str):
         markers = []
-        for marker_id in (int(modem_id) * 2, int(modem_id) * 2 + 1):
-            m = Marker()
-            m.header.stamp = self.get_clock().now().to_msg()
-            m.header.frame_id = self.map_frame
-            m.id = marker_id
-            m.action = Marker.DELETE
-            markers.append(m)
+
+        sphere = Marker()
+        sphere.header.stamp = self.get_clock().now().to_msg()
+        sphere.header.frame_id = self.map_frame
+        sphere.ns = "modem_estimates"
+        sphere.id = int(modem_id) * 2
+        sphere.action = Marker.DELETE
+        markers.append(sphere)
+
+        text = Marker()
+        text.header.stamp = self.get_clock().now().to_msg()
+        text.header.frame_id = self.map_frame
+        text.ns = "modem_estimates_text"
+        text.id = int(modem_id) * 2 + 1
+        text.action = Marker.DELETE
+        markers.append(text)
+
         self.marker_pub.publish(MarkerArray(markers=markers))
 
     def _delete_all_markers(self):
-        m = Marker()
-        m.header.stamp = self.get_clock().now().to_msg()
-        m.header.frame_id = self.map_frame
-        m.action = Marker.DELETEALL
-        self.marker_pub.publish(MarkerArray(markers=[m]))
+        marker = Marker()
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.header.frame_id = self.map_frame
+        marker.action = Marker.DELETEALL
+        self.marker_pub.publish(MarkerArray(markers=[marker]))
 
     def _geopoint_to_map_point(self, gp: GeoPoint) -> Point | None:
         try:
             ps = convert_latlon_to_utm(gp)
+
             if self.utm_frame is None:
                 self.utm_frame = ps.header.frame_id
                 self.get_logger().info(f"UTM frame set to {self.utm_frame}")
