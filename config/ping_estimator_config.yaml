@@ -43,9 +43,11 @@ estimator:
     initial_sigma_z_m: 2.0
 
 topics:
-  own_latlon_topic: "/lolo/smarc/latlon"
-  own_depth_topic: "/lolo/smarc/depth"
+  own_latlon_topic: "smarc/latlon"
+  own_depth_topic: "smarc/depth"
   own_position_max_age_s: 3.0
-  geopoint_topic: "/modem_estimates/geopoint"
-  marker_topic: "/modem_estimates/rviz"
+
+  geopoint_topic: "modem_estimates/geopoint"
+  marker_topic: "modem_estimates/rviz"
+  
   map_frame: "M350/map"

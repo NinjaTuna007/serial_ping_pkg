@@ -9,6 +9,7 @@
     output="screen"
     namespace="$(var robot_name)">
 
+    <param name="robot_name" value="$(var robot_name)" />
     <param name="use_sim_time" value="$(var use_sim_time)" />
   </node>
 </launch>

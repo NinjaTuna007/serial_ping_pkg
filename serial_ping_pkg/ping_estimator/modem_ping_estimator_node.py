@@ -322,6 +322,9 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         topics_cfg = config.get('topics', {})
 
         # ---------------- parameters ----------------
+        self.declare_parameter("robot_name", config.get("robot_name", "lolo"))
+        self.robot_name = str(self.get_parameter("robot_name").value)
+
         self.declare_parameter('serial.port', serial_cfg.get('port', '/dev/ttyACM0'))
         self.declare_parameter('serial.port_fallback', serial_cfg.get('port_fallback', '/dev/ttyACM1'))
         self.declare_parameter('serial.baudrate', serial_cfg.get('baudrate', 115200))
