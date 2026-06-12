@@ -26,21 +26,21 @@
           exec="owtt_leader_node"
           name="owtt_leader_node"
           output="screen">
-        <param name="serial.port" value="$(var serial_port)"/>
-        <param name="serial.port_fallback" value="$(var serial_port_fallback)"/>
+        <param name="serial.port" type="str" value="$(var serial_port)"/>
+        <param name="serial.port_fallback" type="str" value="$(var serial_port_fallback)"/>
         <param name="serial.baudrate" value="$(var serial_baudrate)"/>
         <param name="teensy.own_modem_id" type="str" value="$(var own_modem_id)"/>
         <param name="teensy.listen_for_modem_id" type="str" value="$(var listen_for_modem_id)"/>
         <param name="teensy.broadcast_interval_s" value="$(var broadcast_interval_s)"/>
-        <param name="leader.robot_name" value="$(var robot_name)"/>
-        <param name="leader.latlon_topic" value="$(var latlon_topic)"/>
-        <param name="leader.base_frame" value="$(var base_frame)"/>
-        <param name="leader.modem_frame" value="$(var modem_frame)"/>
-        <param name="leader.base_link_suffix" value="$(var base_link_suffix)"/>
-        <param name="leader.modem_link_suffix" value="$(var modem_link_suffix)"/>
-        <param name="leader.world_frame" value="$(var world_frame)"/>
+        <param name="leader.robot_name" type="str" value="$(var robot_name)"/>
+        <param name="leader.latlon_topic" type="str" value="$(var latlon_topic)"/>
+        <param name="leader.base_frame" type="str" value="$(var base_frame)"/>
+        <param name="leader.modem_frame" type="str" value="$(var modem_frame)"/>
+        <param name="leader.base_link_suffix" type="str" value="$(var base_link_suffix)"/>
+        <param name="leader.modem_link_suffix" type="str" value="$(var modem_link_suffix)"/>
+        <param name="leader.world_frame" type="str" value="$(var world_frame)"/>
         <param name="leader.send_period_s" value="$(var send_period_s)"/>
-        <param name="teensy.mode" value="$(var mode)"/>
+        <param name="teensy.mode" type="str" value="$(var mode)"/>
         <param name="teensy.command_terminator" type="str" value="$(var command_terminator)"/>
     </node>
 </launch>
