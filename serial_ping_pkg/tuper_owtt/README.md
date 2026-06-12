@@ -178,6 +178,56 @@ a launch argument.
 
 ---
 
+## One-shot serial commands (`teensy_cmd`)
+
+Sometimes you just want to fire a single command at the Teensy/modem — set wire
+mode, provision a modem id, send a ping or a broadcast — **without running a
+node**. `teensy_cmd` does exactly that: it opens the port, writes the command
+(with the `\r\n` terminator), optionally reads back the reply, then closes the
+port and exits. Nothing stays running and the port is left free.
+
+It accepts **any raw command string**; the `--wire / --receiver / --transmitter`
+flags are optional convenience builders that just assemble the `$Y…` string for
+you.
+
+```bash
+# Provision wire mode + modem id 101 (raw string, or the convenience flag)
+ros2 run serial_ping_pkg teensy_cmd '$Y101W' --port /dev/ttyUSB0
+ros2 run serial_ping_pkg teensy_cmd --wire --id 101 --port /dev/ttyUSB0
+
+# Build other $Y configs without remembering the format
+ros2 run serial_ping_pkg teensy_cmd --receiver --id 101
+ros2 run serial_ping_pkg teensy_cmd --transmitter --id 042 --listen 007 --epochs 4
+
+# Any arbitrary command — ping, broadcast, classic Succorfish, etc.
+ros2 run serial_ping_pkg teensy_cmd '$P002'
+ros2 run serial_ping_pkg teensy_cmd '$B05HELLO'
+
+# Send raw (no terminator), wait longer for a reply, or skip reading entirely
+ros2 run serial_ping_pkg teensy_cmd '$P002' --no-terminator
+ros2 run serial_ping_pkg teensy_cmd '$P002' --read 3
+ros2 run serial_ping_pkg teensy_cmd '$Y101W' --read 0
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `command` (positional) | — | raw command string, e.g. `$Y101W`, `$P002`, `$B05HELLO` |
+| `--port` | `/dev/ttyACM0` | serial device |
+| `--port-fallback` | `/dev/ttyACM1` | tried if the primary fails to open |
+| `--baud` | `115200` | baud rate |
+| `--terminator` | `\r\n` | terminator appended to the command (accepts escapes like `'\r\n'`) |
+| `--no-terminator` | off | send the command with nothing appended |
+| `--read` | `1.5` | seconds to read and print the reply (`0` = don't read) |
+| `--wire` / `--receiver` / `--transmitter` | — | build a `$Y<id><mode>` command instead of a raw string |
+| `--id` | `101` | own modem id for the builder flags |
+| `--listen` | `000` | transmitter: modem id to wait for (`000` = go first) |
+| `--epochs` | `1` | transmitter: broadcast cadence in epochs (1–4) |
+
+> Because it opens and closes the port itself, don't run `teensy_cmd` while a
+> leader/follower node is up — they'd both fight for the same serial device.
+
+---
+
 ## Launch
 
 > Launch **argument** names differ from the internal parameter names (e.g. the
