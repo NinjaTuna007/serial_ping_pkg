@@ -17,7 +17,7 @@ ping:
 estimator:
   method: "least_squares"        # "least_squares" or "ekf"
 
-  default_sound_velocity: 330.0 # 330 m/s for in air testing 
+  default_sound_velocity: 1500.0 # 1500m/s for underwater testing or 330 m/s for in air testing 
   sound_velocity_topic: "/lolo/sensors/svs"
   sound_velocity_msg_type: "svs_interfaces/msg/SVS"
   sound_velocity_field: "svs"
