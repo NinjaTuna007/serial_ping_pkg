@@ -12,6 +12,7 @@ setup(
         package_name + '.informed_leader_follower',
         package_name + '.acoustic_relay',
         package_name + '.tuper_owtt',
+        package_name + '.ping_estimator',
     ],
     data_files=[
     	('share/ament_index/resource_index/packages',
@@ -27,7 +28,7 @@ setup(
         ('share/' + package_name + '/NM3Firmware', glob('NM3Firmware/*') if os.path.exists('NM3Firmware') else []),
         ('share/' + package_name + '/User_Manual', glob('User Manual/*') if os.path.exists('User Manual') else []),
     ],
-    install_requires=['setuptools', 'pyyaml', 'pyserial', 'pandas'],
+    install_requires=['setuptools', 'pyyaml', 'pyserial', 'pandas', 'numpy'],
     zip_safe=True,
     maintainer='Shekhar Devm Upadhyay',
     maintainer_email='sdup@kth.se',
@@ -44,6 +45,7 @@ setup(
             'single_target_ping_node = serial_ping_pkg.single_target_ping_node:main',
             'owtt_follower_node = serial_ping_pkg.tuper_owtt.owtt_follower_node:main',
             'owtt_leader_node = serial_ping_pkg.tuper_owtt.owtt_leader_node:main',
+            'modem_ping_estimator_node = serial_ping_pkg.ping_estimator.modem_ping_estimator_node:main',
         ],
     },
 )

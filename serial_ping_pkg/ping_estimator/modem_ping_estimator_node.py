@@ -3,6 +3,7 @@
 import math
 import re
 from enum import Enum
+import json
 
 import numpy as np
 import rclpy
@@ -25,6 +26,22 @@ from serial_ping_pkg.utils import load_yaml_config, init_serial
 from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
 from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor, ExternalShutdownException
+
+"""
+The node has a four-mode action server:
+  add      -> add modem ID, optionally with known depth
+  remove   -> remove one modem ID
+  clear    -> remove all modem IDs and delete markers
+  ping     -> start pinging/localizing all active modem IDs
+
+During ping mode, it sends $Pxxx commands, parses #RxxxTtttt responses,
+converts two-way travel time to range, accumulates range constraints, estimates
+the modem position using least-squares or EKF, and publishes GeoPointStamped
+once the uncertainty is below the configured threshold. It also publishes RViz
+markers for visualization.    
+"""
 
 class PingState(Enum):
     IDLE = 0
@@ -422,6 +439,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.state = PingState.IDLE
         self.action_done = True
         self.status_msg = "idle"
+        self.ping_action_result: bool | None = None
 
         self.ping_queue: list[str] = []
         self.attempts_left: dict[str, int] = {}
@@ -430,8 +448,10 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.ping_failed: set[str] = set()
 
         self.waiting_for_id: str | None = None
-        self.ping_deadline = None
-        self.task_deadline = None
+        
+        self.ping_deadline_s = None
+        self.task_deadline_s = None
+        self.last_wait_log_s = 0.0
 
         self.serial_buffer = ""
 
@@ -467,8 +487,8 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             "smarc_modem_ping",
             self._on_goal_received,
             self._on_cancel_received,
-            self._tick,
-            self._action_is_done,
+            self._prepare_action_loop,
+            self._action_loop_inner,
             self._feedback,
             loop_frequency=10,
         )
@@ -482,6 +502,13 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             lambda: True,
             lambda: "modem ping stopped",
             loop_frequency=5,
+        )
+        
+        self.ping_cb_group = ReentrantCallbackGroup()
+        self.ping_timer = self.create_timer(
+            0.1,
+            self._tick,
+            callback_group=self.ping_cb_group,
         )
 
         self.get_logger().info(
@@ -516,10 +543,21 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
     # ------------------------------------------------------------------ actions
 
-    def _on_goal_received(self, goal_request: dict) -> bool:
-        mode = str(goal_request.get('mode', '')).lower().strip()
+    def _now_s(self) -> float:
+      return self.get_clock().now().nanoseconds * 1e-9
 
-        if mode == 'add':
+    def _unwrap_goal(self, goal_request: dict) -> dict:
+        if isinstance(goal_request, dict) and "json-params" in goal_request:
+            jp = goal_request["json-params"]
+            return json.loads(jp) if isinstance(jp, str) else jp
+        return goal_request
+
+    def _on_goal_received(self, goal_request: dict) -> bool:
+     
+        goal_request = self._unwrap_goal(goal_request)
+        mode = str(goal_request.get("mode", "")).lower().strip()
+
+        if mode == "add":
             modem_id = self._parse_goal_modem_id(goal_request)
             if modem_id is None:
                 return False
@@ -544,7 +582,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             self.get_logger().info(self.status_msg)
             return True
 
-        if mode == 'remove':
+        if mode == "remove":
             modem_id = self._parse_goal_modem_id(goal_request)
             if modem_id is None:
                 return False
@@ -559,17 +597,22 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             self._clear_all_modems("cleared all modem ids")
             return True
 
-        if mode == 'ping':
+        if mode == "ping":
             if not self.modem_ids:
                 self.status_msg = "no modem ids to ping"
                 self.action_done = True
+                self.ping_action_result = False
                 self.get_logger().warn(self.status_msg)
                 return True
 
-            retry_count = int(goal_request.get('retry_count', self.default_retry_count))
-            task_timeout_s = float(goal_request.get('task_timeout_s', self.default_task_timeout_s))
+            retry_count = int(goal_request.get("retry_count", self.default_retry_count))
+            task_timeout_s = float(goal_request.get("task_timeout_s", self.default_task_timeout_s))
 
-            self._start_ping_task(retry_count=retry_count, task_timeout_s=task_timeout_s)
+            self._start_ping_task(
+                retry_count=retry_count,
+                task_timeout_s=task_timeout_s,
+            )
+
             return True
 
         self.get_logger().error(f"Unknown modem ping action mode: {mode!r}")
@@ -591,7 +634,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         if self.waiting_for_id == modem_id:
             self.waiting_for_id = None
-            self.ping_deadline = None
+            self.ping_deadline_s = None
 
         self.ping_queue = [mid for mid in self.ping_queue if mid != modem_id]
         self._delete_marker_for_modem(modem_id)
@@ -612,8 +655,8 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.ping_success.clear()
         self.ping_failed.clear()
         self.waiting_for_id = None
-        self.ping_deadline = None
-        self.task_deadline = None
+        self.ping_deadline_s = None
+        self.task_deadline_s = None
 
         self._delete_all_markers()
 
@@ -653,11 +696,14 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.estimate_done = set()
 
         self.waiting_for_id = None
-        self.ping_deadline = None
-        self.task_deadline = self.get_clock().now() + Duration(seconds=task_timeout_s)
+        now_s = self._now_s()
+        self.ping_deadline_s = None
+        self.task_deadline_s = now_s + task_timeout_s
+        self.last_wait_log_s = now_s
 
         self.state = PingState.RUNNING
         self.action_done = False
+        self.ping_action_result = None
         self.status_msg = (
             f"ping/localize {self.modem_ids}, retries={retry_count}, "
             f"timeout={task_timeout_s}s"
@@ -672,44 +718,84 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.attempts_left = {}
         self.status_msg = reason
 
+    def _prepare_action_loop(self):
+        # Nothing to prepare here.
+        # _on_goal_received already configured the requested mode.
+        return None
+    
+    def _action_loop_inner(self):
+        # Do NOT run _tick() here.
+        # _tick() is owned by the ROS timer.
+        # This callback only reports action status.
+
+        if not self.action_done:
+            return None  # keep action RUNNING
+
+        if self.ping_action_result is None:
+            return True  # add/remove/clear succeeded
+
+        return bool(self.ping_action_result)
+    
     def _tick(self):
         self._read_serial()
 
         if self.state != PingState.RUNNING:
-            return
+            return True
 
-        now = self.get_clock().now()
+        now_s = self._now_s()
 
-        if self.task_deadline is not None and now > self.task_deadline:
+        if self.task_deadline_s is not None and now_s > self.task_deadline_s:
             self.state = PingState.DONE
             self.action_done = True
-            remaining = sorted(set(self.modem_ids) - self.estimate_done - self.ping_failed)
+            self.ping_action_result = False
+
+            remaining = sorted(set(self.modem_ids) - self.ping_success - self.ping_failed)
             self.status_msg = (
-                f"ping task timeout. estimated={sorted(self.estimate_done)}, "
+                f"ping task timeout. success={sorted(self.ping_success)}, "
                 f"failed={sorted(self.ping_failed)}, remaining={remaining}"
             )
             self.get_logger().warn(self.status_msg)
-            return
+            return True
 
         if self.waiting_for_id is not None:
-            if self.ping_deadline is not None and now > self.ping_deadline:
-                self._handle_ping_timeout(self.waiting_for_id)
-            return
+            # Debug heartbeat: proves the action loop is still ticking.
+            if now_s - self.last_wait_log_s >= 2.0:
+                remaining_s = None
+                if self.ping_deadline_s is not None:
+                    remaining_s = self.ping_deadline_s - now_s
 
-        completed = self.estimate_done | self.ping_failed
+                self.get_logger().info(
+                    f"waiting for modem {self.waiting_for_id}, "
+                    f"deadline_in={remaining_s:.1f}s"
+                    if remaining_s is not None
+                    else f"waiting for modem {self.waiting_for_id}, no deadline"
+                )
+                self.last_wait_log_s = now_s
+
+            if self.ping_deadline_s is not None and now_s > self.ping_deadline_s:
+                self._handle_ping_timeout(self.waiting_for_id)
+
+            return True
+
+        completed = self.ping_success | self.ping_failed
 
         if set(self.modem_ids).issubset(completed):
             self.state = PingState.DONE
             self.action_done = True
+
+            self.ping_action_result = True
+
             self.status_msg = (
-                f"ping/localization complete. estimated={sorted(self.estimate_done)}, "
+                f"ping complete. success={sorted(self.ping_success)}, "
                 f"failed={sorted(self.ping_failed)}"
             )
+
             if self.ping_failed:
                 self.get_logger().warn(self.status_msg)
             else:
                 self.get_logger().info(self.status_msg)
-            return
+
+            return True
 
         if not self.ping_queue:
             self.ping_queue = [mid for mid in self.modem_ids if mid not in completed]
@@ -719,12 +805,14 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             if next_id not in completed:
                 self._send_ping(next_id)
 
+        return True
+
     def _send_ping(self, modem_id: str):
         cmd = f"$P{modem_id}"
         self.send_command(cmd)
 
         self.waiting_for_id = modem_id
-        self.ping_deadline = self.get_clock().now() + Duration(seconds=self.ping_response_timeout_s)
+        self.ping_deadline_s = self._now_s() + self.ping_response_timeout_s
 
         remaining = self.attempts_left.get(modem_id, self.attempt_budget)
         self.status_msg = f"pinging {modem_id}, attempts_left={remaining}"
@@ -747,7 +835,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             self._add_range_measurement(modem_id, own_xyz, range_m)
 
         self.waiting_for_id = None
-        self.ping_deadline = None
+        self.ping_deadline_s = None
 
         self.status_msg = f"ping success {modem_id}, range={range_m:.2f}m"
         self.get_logger().info(self.status_msg)
@@ -765,7 +853,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             self.ping_failed.add(modem_id)
 
         self.waiting_for_id = None
-        self.ping_deadline = None
+        self.ping_deadline_s = None
 
     # ------------------------------------------------------------------ serial
 
@@ -1138,7 +1226,21 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
 
 def main(args=None):
-    run_node(ModemPingEstimatorNode, args=args)
+    rclpy.init(args=args)
+    node = ModemPingEstimatorNode()
+
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
+
+    try:
+        executor.spin()
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        executor.shutdown()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

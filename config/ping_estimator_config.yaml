@@ -1,23 +1,23 @@
 serial:
   port: "/dev/ttyACM0"
   port_fallback: "/dev/ttyACM1"
-  baudrate: 9600 # or 115200 if using Translucent Teensy
+  baudrate: 115200 # 9600 if Succor modem or 115200 if using Translucent Teensy
 
 teensy:
   enable_wire_on_startup: true
-  own_modem_id: "101"
+  own_modem_id: "007"
   command_terminator: "\r\n"
 
 ping:
   max_retries: 3
-  response_timeout_s: 8.0
+  response_timeout_s: 3.0
   task_timeout_s: 180.0
   cycle_until_estimated: true
 
 estimator:
   method: "least_squares"        # "least_squares" or "ekf"
 
-  default_sound_velocity: 1500.0
+  default_sound_velocity: 330.0 # 330 m/s for in air testing 
   sound_velocity_topic: "/lolo/sensors/svs"
   sound_velocity_msg_type: "svs_interfaces/msg/SVS"
   sound_velocity_field: "svs"
