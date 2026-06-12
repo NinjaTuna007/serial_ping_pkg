@@ -30,7 +30,7 @@
         <param name="serial.port" value="$(var serial_port)"/>
         <param name="serial.port_fallback" value="$(var serial_port_fallback)"/>
         <param name="serial.baudrate" value="$(var serial_baudrate)"/>
-        <param name="owtt.delta_prefix" value="$(var owtt_delta_prefix)"/>
+        <param name="owtt.delta_prefix" type="str" value="$(var owtt_delta_prefix)"/>
         <param name="owtt.offset_us" value="$(var owtt_offset_us)"/>
         <param name="owtt.default_sound_velocity" value="$(var default_sound_velocity)"/>
         <param name="owtt.sound_velocity_topic" value="$(var sound_velocity_topic)"/>
