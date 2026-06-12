@@ -1,0 +1,53 @@
+serial:
+  port: "/dev/ttyACM0"
+  port_fallback: "/dev/ttyACM1"
+  baudrate: 115200 # 9600 if Succor modem or 115200 if using Translucent Teensy
+
+teensy:
+  enable_wire_on_startup: true
+  own_modem_id: "007"
+  command_terminator: "\r\n"
+
+ping:
+  max_retries: 3
+  response_timeout_s: 3.0
+  task_timeout_s: 180.0
+  cycle_until_estimated: true
+
+estimator:
+  method: "least_squares"        # "least_squares" or "ekf"
+
+  default_sound_velocity: 1500.0 # 1500m/s for underwater testing or 330 m/s for in air testing 
+  sound_velocity_topic: "/lolo/sensors/svs"
+  sound_velocity_msg_type: "svs_interfaces/msg/SVS"
+  sound_velocity_field: "svs"
+
+  range_sigma_m: 1.0
+  own_position_sigma_m: 1.0
+  own_depth_sigma_m: 0.3
+  remote_depth_sigma_m: 0.5
+
+  use_known_remote_depth: true
+  min_measurements: 4
+  max_measurements: 40
+  max_position_uncertainty_m: 5.0
+
+  least_squares:
+    max_iterations: 20
+    damping: 0.001
+    outlier_gate_m: 10.0
+
+  ekf:
+    process_noise_std_m: 0.05
+    initial_sigma_xy_m: 50.0
+    initial_sigma_z_m: 2.0
+
+topics:
+  own_latlon_topic: "smarc/latlon"
+  own_depth_topic: "smarc/depth"
+  own_position_max_age_s: 3.0
+
+  geopoint_topic: "modem_estimates/geopoint"
+  marker_topic: "modem_estimates/rviz"
+  
+  map_frame: "M350/map"
