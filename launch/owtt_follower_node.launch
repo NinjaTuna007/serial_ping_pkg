@@ -7,7 +7,7 @@
 
     <!-- OWTT range conversion -->
     <arg name="owtt_delta_prefix" default="#I" description="Teensy OWTT delta line prefix"/>
-    <arg name="owtt_offset_us" default="0.0" description="Constant offset subtracted from delta (microseconds)"/>
+    <arg name="owtt_offset_us" default="79500.0" description="Constant offset subtracted from delta (microseconds)"/>
     <arg name="default_sound_velocity" default="1500.0" description="Fallback sound speed (m/s)"/>
     <arg name="sound_velocity_topic" default="/lolo/sensors/svs" description="Live sound-velocity topic"/>
     <arg name="sound_velocity_msg_type" default="svs_interfaces/msg/SVS" description="Sound-velocity msg type"/>

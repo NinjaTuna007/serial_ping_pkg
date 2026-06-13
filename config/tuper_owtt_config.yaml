@@ -33,7 +33,8 @@ owtt:
   # Line prefix the Teensy uses to report the measured OWTT delta.
   delta_prefix: "#I"
   # Constant offset subtracted from the reported delta, in microseconds.
-  offset_us: 0.0
+  # Calibrated against GPS truth in the live setting (lolo <-> floatsam, Askö 2026).
+  offset_us: 79500.0
   # Fallback sound speed (m/s) used when no live SVS data is available.
   default_sound_velocity: 1500.0
   # Optional live sound-velocity source (subscribed if available).
