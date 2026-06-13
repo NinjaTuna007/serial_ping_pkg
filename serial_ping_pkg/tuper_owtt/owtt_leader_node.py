@@ -28,6 +28,7 @@ then convert into a small lat/lon delta (flat-earth approximation).
 import math
 
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor
 from geographic_msgs.msg import GeoPoint
 
 import tf2_ros
@@ -57,8 +58,11 @@ class OwttLeaderNode(WireSafeSerialNode):
         self.declare_parameter('serial.baudrate', serial_cfg.get('baudrate', 115200))
 
         # --- Teensy transmitter parameters ---
-        self.declare_parameter('teensy.own_modem_id', teensy_cfg.get('own_modem_id', '007'))
-        self.declare_parameter('teensy.listen_for_modem_id', teensy_cfg.get('listen_for_modem_id', '000'))
+        # Modem ids tolerate ros2 launch coercion (str '069' / int 69 / float 69.0);
+        # declared dynamically typed and normalised on read.
+        id_desc = ParameterDescriptor(dynamic_typing=True)
+        self.declare_parameter('teensy.own_modem_id', teensy_cfg.get('own_modem_id', '007'), id_desc)
+        self.declare_parameter('teensy.listen_for_modem_id', teensy_cfg.get('listen_for_modem_id', '000'), id_desc)
         self.declare_parameter('teensy.broadcast_interval_s', teensy_cfg.get('broadcast_interval_s', 4))
         self.declare_parameter('teensy.command_terminator', teensy_cfg.get('command_terminator', '\r\n'))
         self.declare_parameter('teensy.mode', teensy_cfg.get('mode', 'transmitter'))
@@ -80,8 +84,8 @@ class OwttLeaderNode(WireSafeSerialNode):
         self.port = self.get_parameter('serial.port').get_parameter_value().string_value
         self.port_fallback = self.get_parameter('serial.port_fallback').get_parameter_value().string_value
         self.baudrate = self.get_parameter('serial.baudrate').get_parameter_value().integer_value
-        self.own_modem_id = self.get_parameter('teensy.own_modem_id').get_parameter_value().string_value
-        self.listen_for_modem_id = self.get_parameter('teensy.listen_for_modem_id').get_parameter_value().string_value
+        self.own_modem_id = ti.normalize_modem_id(self.get_parameter('teensy.own_modem_id').value)
+        self.listen_for_modem_id = ti.normalize_modem_id(self.get_parameter('teensy.listen_for_modem_id').value)
         self.broadcast_interval_s = self.get_parameter('teensy.broadcast_interval_s').get_parameter_value().integer_value
         self.command_terminator = self.get_parameter('teensy.command_terminator').get_parameter_value().string_value
         self.mode = self.get_parameter('teensy.mode').get_parameter_value().string_value.lower()

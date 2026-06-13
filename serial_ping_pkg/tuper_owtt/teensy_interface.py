@@ -36,6 +36,26 @@ _MODE_CODE = {
 }
 
 
+def normalize_modem_id(value, width=3, default="000"):
+    """Coerce a modem id into a canonical zero-padded string (e.g. ``'069'``).
+
+    ``ros2 launch`` will happily turn a numeric-looking override such as ``069``
+    into the float ``69.0`` (even when the ``<param>`` declares ``type="str"``),
+    and a config YAML may store it as an int. This accepts ``str`` / ``int`` /
+    ``float`` and returns the canonical ``width``-digit id, restoring any leading
+    zero that the numeric coercion dropped. Non-numeric values pass through
+    unchanged.
+    """
+    if value is None or isinstance(value, bool):
+        value = default
+    if isinstance(value, float):
+        value = int(round(value))
+    s = str(value).strip()
+    if s.endswith(".0") and s[:-2].isdigit():  # stringified float, e.g. '69.0'
+        s = s[:-2]
+    return s.zfill(width) if s.isdigit() else s
+
+
 def build_config_command(mode, own_modem_id, listen_for_modem_id="000",
                          broadcast_interval_s=4, prefix="$Y"):
     """Build the ``$Y<own_id><mode><args>`` config command sent to the Teensy.
@@ -49,9 +69,9 @@ def build_config_command(mode, own_modem_id, listen_for_modem_id="000",
     """
     mode = TeensyMode(mode)
     code = _MODE_CODE[mode]
-    own = str(own_modem_id).zfill(3)
+    own = normalize_modem_id(own_modem_id)
     if mode == TeensyMode.TRANSMITTER:
-        listen = str(listen_for_modem_id).zfill(3)
+        listen = normalize_modem_id(listen_for_modem_id)
         return f"{prefix}{own}{code}{listen}{broadcast_interval_s}s"
     # Receiver is forcibly a non-broadcasting follower; wire is a pure passthrough.
     return f"{prefix}{own}{code}"

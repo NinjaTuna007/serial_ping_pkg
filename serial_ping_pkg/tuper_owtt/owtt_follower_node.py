@@ -19,6 +19,7 @@ same topics the legacy ``informed_follower_node`` used:
 """
 
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor
 from geographic_msgs.msg import GeoPoint
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32
@@ -51,16 +52,21 @@ class OwttFollowerNode(WireSafeSerialNode):
         self.declare_parameter('owtt.sound_velocity_msg_type', owtt_cfg.get('sound_velocity_msg_type', 'svs_interfaces/msg/SVS'))
         self.declare_parameter('owtt.sound_velocity_field', owtt_cfg.get('sound_velocity_field', 'svs'))
 
+        # Modem ids must tolerate however ros2 launch coerced the override
+        # (str '069', int 69, or float 69.0). Declare them dynamically typed and
+        # normalise on read; see teensy_interface.normalize_modem_id.
+        id_desc = ParameterDescriptor(dynamic_typing=True)
+
         # --- Follower parameters ---
         self.declare_parameter('follower.leader_gps_msg_type', follower_cfg.get('leader_gps_msg_type', 'GeoPoint'))
         # Two leaders, routed by acoustic modem id. Names + ids overridable via launch.
         self.declare_parameter('follower.leader1_name', follower_cfg.get('leader1_name', 'leader1'))
-        self.declare_parameter('follower.leader1_modem_id', follower_cfg.get('leader1_modem_id', '007'))
+        self.declare_parameter('follower.leader1_modem_id', follower_cfg.get('leader1_modem_id', '007'), id_desc)
         self.declare_parameter('follower.leader2_name', follower_cfg.get('leader2_name', 'leader2'))
-        self.declare_parameter('follower.leader2_modem_id', follower_cfg.get('leader2_modem_id', '111'))
+        self.declare_parameter('follower.leader2_modem_id', follower_cfg.get('leader2_modem_id', '111'), id_desc)
 
         # --- Teensy / mode parameters ---
-        self.declare_parameter('teensy.own_modem_id', teensy_cfg.get('own_modem_id', '101'))
+        self.declare_parameter('teensy.own_modem_id', teensy_cfg.get('own_modem_id', '101'), id_desc)
         self.declare_parameter('teensy.command_terminator', teensy_cfg.get('command_terminator', '\r\n'))
         self.declare_parameter('teensy.mode', teensy_cfg.get('mode', 'receiver'))
 
@@ -75,10 +81,10 @@ class OwttFollowerNode(WireSafeSerialNode):
         self.sound_velocity_field = self.get_parameter('owtt.sound_velocity_field').get_parameter_value().string_value
         self.leader_gps_msg_type = self.get_parameter('follower.leader_gps_msg_type').get_parameter_value().string_value
         self.leader1_name = self.get_parameter('follower.leader1_name').get_parameter_value().string_value
-        self.leader1_modem_id = self.get_parameter('follower.leader1_modem_id').get_parameter_value().string_value
+        self.leader1_modem_id = ti.normalize_modem_id(self.get_parameter('follower.leader1_modem_id').value)
         self.leader2_name = self.get_parameter('follower.leader2_name').get_parameter_value().string_value
-        self.leader2_modem_id = self.get_parameter('follower.leader2_modem_id').get_parameter_value().string_value
-        self.own_modem_id = self.get_parameter('teensy.own_modem_id').get_parameter_value().string_value
+        self.leader2_modem_id = ti.normalize_modem_id(self.get_parameter('follower.leader2_modem_id').value)
+        self.own_modem_id = ti.normalize_modem_id(self.get_parameter('teensy.own_modem_id').value)
         self.command_terminator = self.get_parameter('teensy.command_terminator').get_parameter_value().string_value
         self.mode = self.get_parameter('teensy.mode').get_parameter_value().string_value.lower()
 
