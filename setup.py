@@ -47,6 +47,7 @@ setup(
             'owtt_leader_node = serial_ping_pkg.tuper_owtt.owtt_leader_node:main',
             'teensy_cmd = serial_ping_pkg.tuper_owtt.teensy_cmd:main',
             'modem_ping_estimator_node = serial_ping_pkg.ping_estimator.modem_ping_estimator_node:main',
+            'modem_ping_cmd = serial_ping_pkg.ping_estimator.modem_ping_cmd:main',
         ],
     },
 )

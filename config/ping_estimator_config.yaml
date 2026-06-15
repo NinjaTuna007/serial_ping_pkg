@@ -1,7 +1,7 @@
 serial:
-  port: "/dev/ttyACM0"
+  port: "/dev/ttyUSB0"
   port_fallback: "/dev/ttyACM1"
-  baudrate: 115200 # 9600 if Succor modem or 115200 if using Translucent Teensy
+  baudrate: 9600 # 9600 if Succor modem or 115200 if using Translucent Teensy
 
 teensy:
   enable_wire_on_startup: true

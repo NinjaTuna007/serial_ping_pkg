@@ -68,10 +68,10 @@ def main(argv=None):
         description="Send a single command to the Teensy/modem over serial and exit.")
     parser.add_argument('command', nargs='?',
                         help="Raw command string, e.g. '$Y101W', '$P002', '$B05HELLO'.")
-    parser.add_argument('--port', default='/dev/ttyACM0', help="Serial port (default %(default)s).")
-    parser.add_argument('--port-fallback', default='/dev/ttyACM1',
+    parser.add_argument('--port', default='/dev/ttyUSB0', help="Serial port (default %(default)s).")
+    parser.add_argument('--port-fallback', default='/dev/ttyUSB1',
                         help="Fallback port if the primary fails (default %(default)s).")
-    parser.add_argument('--baud', type=int, default=115200, help="Baud rate (default %(default)s).")
+    parser.add_argument('--baud', type=int, default=9600, help="Baud rate (default %(default)s).")
     parser.add_argument('--terminator', default='\r\n',
                         help="Line terminator appended to the command "
                              "(default CR LF; accepts escapes like '\\r\\n').")
