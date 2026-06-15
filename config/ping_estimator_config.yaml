@@ -7,6 +7,7 @@ teensy:
   enable_wire_on_startup: true
   own_modem_id: "007"
   command_terminator: "\r\n"
+  payload_max_bytes: 64
 
 ping:
   max_retries: 3

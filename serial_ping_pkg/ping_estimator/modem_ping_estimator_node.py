@@ -29,12 +29,16 @@ from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor, ExternalShutdownException
 
+from serial_ping_pkg.ping_estimator.range_estimators import EkfRangeEstimator, LeastSquaresRangeEstimator
+
 """
-The node has a four-mode action server:
-  add      -> add modem ID, optionally with known depth
-  remove   -> remove one modem ID
-  clear    -> remove all modem IDs and delete markers
-  ping     -> start pinging/localizing all active modem IDs
+The node has a six-mode action server:
+  add       -> add modem ID, optionally with known depth
+  remove    -> remove one modem ID
+  clear     -> remove all modem IDs and delete markers
+  ping      -> start pinging/localizing all active modem IDs
+  broadcast -> send a user payload to all modems
+  unicast   -> send a user payload to one modem ID
 
 During ping mode, it sends $Pxxx commands, parses #RxxxTtttt responses,
 converts two-way travel time to range, accumulates range constraints, estimates
@@ -48,250 +52,6 @@ class PingState(Enum):
     RUNNING = 1
     DONE = 2
 
-
-class LeastSquaresRangeEstimator:
-    """
-    Sliding-window range-only nonlinear least-squares estimator.
-
-    Measurement model:
-        range_i = || p_remote - p_own_i ||
-
-    If z_remote is known, only x,y are estimated and z is fixed.
-    If z_remote is None, full x,y,z are estimated.
-    """
-
-    def __init__(
-        self,
-        modem_id: str,
-        z_remote: float | None,
-        max_measurements: int,
-        range_sigma_m: float,
-        remote_depth_sigma_m: float,
-        damping: float,
-        max_iterations: int,
-        outlier_gate_m: float,
-    ):
-        self.modem_id = modem_id
-        self.z_remote = z_remote
-        self.max_measurements = max_measurements
-        self.range_sigma_m = range_sigma_m
-        self.remote_depth_sigma_m = remote_depth_sigma_m
-        self.damping = damping
-        self.max_iterations = max_iterations
-        self.outlier_gate_m = outlier_gate_m
-
-        self.measurements: list[tuple[np.ndarray, float]] = []
-        self.last_xyz: np.ndarray | None = None
-        self.last_cov: np.ndarray | None = None
-
-    def add_measurement(self, own_xyz: np.ndarray, range_m: float):
-        self.measurements.append((np.asarray(own_xyz, dtype=float), float(range_m)))
-        self.measurements = self.measurements[-self.max_measurements:]
-
-    def estimate(self, min_measurements: int):
-        if len(self.measurements) < min_measurements:
-            return None, None
-
-        anchors = np.asarray([m[0] for m in self.measurements], dtype=float)
-        ranges = np.asarray([m[1] for m in self.measurements], dtype=float)
-
-        result = self._solve(anchors, ranges)
-        if result is None:
-            return None, None
-
-        xyz, cov, residuals = result
-
-        # One-pass outlier rejection. Keep it conservative; this is for obvious
-        # bad ranges, not heavy robust optimization.
-        if self.outlier_gate_m > 0.0 and len(residuals) >= min_measurements + 2:
-            keep = np.abs(residuals) <= self.outlier_gate_m
-            if np.count_nonzero(keep) >= min_measurements and not np.all(keep):
-                result2 = self._solve(anchors[keep], ranges[keep])
-                if result2 is not None:
-                    xyz, cov, residuals = result2
-
-        self.last_xyz = xyz
-        self.last_cov = cov
-        return xyz, cov
-
-    def _solve(self, anchors: np.ndarray, ranges: np.ndarray):
-        known_z = self.z_remote is not None
-
-        if self.last_xyz is not None:
-            x = self.last_xyz[:2].copy() if known_z else self.last_xyz.copy()
-        else:
-            x = np.mean(anchors[:, :2], axis=0) if known_z else np.mean(anchors, axis=0)
-
-        J = None
-        residuals = None
-
-        for _ in range(self.max_iterations):
-            residuals_list = []
-            jac_rows = []
-
-            for a, r_meas in zip(anchors, ranges):
-                if known_z:
-                    dx = x[0] - a[0]
-                    dy = x[1] - a[1]
-                    dz = float(self.z_remote) - a[2]
-                    pred = math.sqrt(dx * dx + dy * dy + dz * dz)
-                    pred = max(pred, 1e-6)
-
-                    residuals_list.append(pred - r_meas)
-                    jac_rows.append([dx / pred, dy / pred])
-                else:
-                    d = x - a
-                    pred = max(float(np.linalg.norm(d)), 1e-6)
-
-                    residuals_list.append(pred - r_meas)
-                    jac_rows.append((d / pred).tolist())
-
-            residuals = np.asarray(residuals_list, dtype=float)
-            J = np.asarray(jac_rows, dtype=float)
-
-            H = J.T @ J + self.damping * np.eye(J.shape[1])
-            g = J.T @ residuals
-
-            try:
-                step = -np.linalg.solve(H, g)
-            except np.linalg.LinAlgError:
-                return None
-
-            x = x + step
-
-            if np.linalg.norm(step) < 1e-3:
-                break
-
-        if J is None or residuals is None:
-            return None
-
-        try:
-            cov_state = (self.range_sigma_m ** 2) * np.linalg.inv(J.T @ J)
-        except np.linalg.LinAlgError:
-            return None
-
-        if known_z:
-            xyz = np.array([x[0], x[1], float(self.z_remote)], dtype=float)
-            cov = np.zeros((3, 3), dtype=float)
-            cov[:2, :2] = cov_state
-            cov[2, 2] = self.remote_depth_sigma_m ** 2
-        else:
-            xyz = np.asarray(x, dtype=float)
-            cov = cov_state
-
-        return xyz, cov, residuals
-
-
-class EkfRangeEstimator:
-    """
-    Static-beacon EKF for range-only measurements.
-
-    State:
-        x = [remote_x, remote_y, remote_z]
-
-    If z_remote is known, z is clamped after every update.
-    EKF is initialized from a bootstrap least-squares estimator once enough
-    measurements exist. This avoids the usual garbage EKF initialization problem.
-    """
-
-    def __init__(
-        self,
-        modem_id: str,
-        z_remote: float | None,
-        range_sigma_m: float,
-        remote_depth_sigma_m: float,
-        process_noise_std_m: float,
-        initial_sigma_xy_m: float,
-        initial_sigma_z_m: float,
-        bootstrap_max_measurements: int,
-        bootstrap_damping: float,
-        bootstrap_iterations: int,
-    ):
-        self.modem_id = modem_id
-        self.z_remote = z_remote
-        self.range_sigma_m = range_sigma_m
-        self.remote_depth_sigma_m = remote_depth_sigma_m
-        self.process_noise_std_m = process_noise_std_m
-        self.initial_sigma_xy_m = initial_sigma_xy_m
-        self.initial_sigma_z_m = initial_sigma_z_m
-
-        self.x: np.ndarray | None = None
-        self.P: np.ndarray | None = None
-        self.measurement_count = 0
-
-        self.bootstrap = LeastSquaresRangeEstimator(
-            modem_id=modem_id,
-            z_remote=z_remote,
-            max_measurements=bootstrap_max_measurements,
-            range_sigma_m=range_sigma_m,
-            remote_depth_sigma_m=remote_depth_sigma_m,
-            damping=bootstrap_damping,
-            max_iterations=bootstrap_iterations,
-            outlier_gate_m=0.0,
-        )
-
-    def add_measurement(self, own_xyz: np.ndarray, range_m: float):
-        own_xyz = np.asarray(own_xyz, dtype=float)
-        range_m = float(range_m)
-
-        self.bootstrap.add_measurement(own_xyz, range_m)
-        self.measurement_count += 1
-
-        if self.x is None:
-            xyz, cov = self.bootstrap.estimate(min_measurements=4)
-            if xyz is None:
-                return
-            self._initialize(xyz)
-
-        assert self.x is not None
-        assert self.P is not None
-
-        # Static random-walk prediction.
-        q = self.process_noise_std_m ** 2
-        self.P = self.P + q * np.eye(3)
-
-        if self.z_remote is not None:
-            self.x[2] = float(self.z_remote)
-
-        d = self.x - own_xyz
-        pred = max(float(np.linalg.norm(d)), 1e-6)
-
-        H = (d / pred).reshape(1, 3)
-        R = np.array([[self.range_sigma_m ** 2]], dtype=float)
-
-        y = np.array([[range_m - pred]], dtype=float)
-        S = H @ self.P @ H.T + R
-        K = self.P @ H.T @ np.linalg.inv(S)
-
-        self.x = self.x + (K @ y).reshape(3)
-        self.P = (np.eye(3) - K @ H) @ self.P
-
-        if self.z_remote is not None:
-            self.x[2] = float(self.z_remote)
-            self.P[2, :] = 0.0
-            self.P[:, 2] = 0.0
-            self.P[2, 2] = self.remote_depth_sigma_m ** 2
-
-    def _initialize(self, xyz: np.ndarray):
-        self.x = np.asarray(xyz, dtype=float)
-        self.P = np.diag([
-            self.initial_sigma_xy_m ** 2,
-            self.initial_sigma_xy_m ** 2,
-            self.initial_sigma_z_m ** 2,
-        ]).astype(float)
-
-        if self.z_remote is not None:
-            self.x[2] = float(self.z_remote)
-            self.P[2, 2] = self.remote_depth_sigma_m ** 2
-
-    def estimate(self, min_measurements: int):
-        if self.x is None or self.P is None:
-            return None, None
-        if self.measurement_count < min_measurements:
-            return None, None
-        return self.x.copy(), self.P.copy()
-
-
 class ModemPingEstimatorNode(WireSafeSerialNode):
     """
     Maintains a list of acoustic modem ids, pings them, converts two-way travel
@@ -302,6 +62,8 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
       {"mode": "remove", "modem_id": "007"}
       {"mode": "clear"}
       {"mode": "ping", "retry_count": 3, "task_timeout_s": 180.0}
+      {"mode": "broadcast", "message": "hello"}
+      {"mode": "unicast", "modem_id": "007", "message": "hello"}
 
     Output:
       geographic_msgs/GeoPointStamped
@@ -332,6 +94,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.declare_parameter('teensy.enable_wire_on_startup', teensy_cfg.get('enable_wire_on_startup', True))
         self.declare_parameter('teensy.own_modem_id', teensy_cfg.get('own_modem_id', '101'))
         self.declare_parameter('teensy.command_terminator', teensy_cfg.get('command_terminator', '\r\n'))
+        self.declare_parameter('teensy.payload_max_bytes', teensy_cfg.get('payload_max_bytes', 64))
 
         self.declare_parameter('ping.max_retries', ping_cfg.get('max_retries', 3))
         self.declare_parameter('ping.response_timeout_s', ping_cfg.get('response_timeout_s', 8.0))
@@ -377,6 +140,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.enable_wire_on_startup = bool(self.get_parameter('teensy.enable_wire_on_startup').value)
         self.own_modem_id = str(self.get_parameter('teensy.own_modem_id').value).zfill(3)
         self.command_terminator = self.get_parameter('teensy.command_terminator').value
+        self.payload_max_bytes = int(self.get_parameter('teensy.payload_max_bytes').value)
 
         self.default_retry_count = int(self.get_parameter('ping.max_retries').value)
         self.ping_response_timeout_s = float(self.get_parameter('ping.response_timeout_s').value)
@@ -600,6 +364,9 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             self._clear_all_modems("cleared all modem ids")
             return True
 
+        if mode in ("broadcast", "unicast"):
+            return self._handle_payload_goal(mode, goal_request)
+
         if mode == "ping":
             if not self.modem_ids:
                 self.status_msg = "no modem ids to ping"
@@ -620,6 +387,107 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         self.get_logger().error(f"Unknown modem ping action mode: {mode!r}")
         return False
+
+    def _handle_payload_goal(self, mode: str, goal_request: dict) -> bool:
+        """Send a raw user payload through the modem.
+
+        The action JSON only carries the human-facing message. This node counts
+        the UTF-8 bytes, validates the modem limit, and builds the serial command.
+        """
+        if self.state == PingState.RUNNING:
+            self.status_msg = f"cannot {mode} while ping task is running"
+            self.action_done = True
+            self.get_logger().warn(self.status_msg)
+            return False
+
+        payload_bytes = self._parse_payload_bytes(goal_request)
+        if payload_bytes is None:
+            return False
+
+        modem_id = None
+        if mode == "unicast":
+            modem_id = self._parse_goal_modem_id(goal_request)
+            if modem_id is None:
+                return False
+
+        byte_count = len(payload_bytes)
+        if byte_count > self.payload_max_bytes:
+            self.status_msg = (
+                f"{mode} payload too large: {byte_count} bytes > "
+                f"max {self.payload_max_bytes} bytes"
+            )
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return False
+
+        cmd = self._build_payload_command(mode, payload_bytes, modem_id)
+        self.send_command(cmd)
+
+        target = "broadcast" if mode == "broadcast" else f"unicast to modem {modem_id}"
+        self.status_msg = f"{target}: sent {byte_count} byte(s)"
+        self.action_done = True
+        self.ping_action_result = None
+        self.get_logger().info(self.status_msg)
+        return True
+
+    def _parse_payload_bytes(self, goal_request: dict) -> bytes | None:
+        
+        raw = None
+        
+        if "message" in goal_request:
+            raw = goal_request["message"]
+
+        if raw is None:
+            self.status_msg = "payload goal missing 'message'"
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return None
+
+        if not isinstance(raw, str):
+            self.status_msg = f"payload message must be a string, got {type(raw).__name__}"
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return None
+
+        if "\r" in raw or "\n" in raw:
+            self.status_msg = "payload message must not contain CR/LF"
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return None
+
+        try:
+            payload_bytes = raw.encode("ascii")
+        except UnicodeEncodeError:
+            self.status_msg = "payload message must contain ASCII only"
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return None
+
+    def _build_payload_command(
+        self,
+        mode: str,
+        payload_bytes: bytes,
+        modem_id: str | None,
+    ) -> str:
+        """Build the serial command sent to the Teensy/modem bridge.
+
+        Current assumed firmware protocol:
+          broadcast: $B<NN><payload>
+          unicast:   $U<ID><NN><payload>
+
+        where <NN> is the payload byte count from 00 to 64 and <ID> is a
+        zero-padded three-digit modem id. Keep this as the only protocol-specific
+        function so the action-server logic does not care if the firmware syntax
+        changes later.
+        """
+        payload = payload_bytes.decode("utf-8")
+        byte_count = len(payload_bytes)
+
+        if mode == "broadcast":
+            return f"$B{byte_count:02d}{payload}"
+
+        assert modem_id is not None
+        return f"$U{modem_id}{byte_count:02d}{payload}"
 
     def _remove_modem(self, modem_id: str):
         if modem_id in self.modem_ids:
@@ -883,7 +751,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         # Local ack/echo from ping command.
         # Example: $P007
-        if line.startswith('$P'):
+        if line.startswith(('$P', '$B', '$U')):
             return
 
         # Success:

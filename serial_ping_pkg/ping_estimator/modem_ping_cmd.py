@@ -8,6 +8,8 @@ The ``modem_ping_estimator_node`` exposes a four-mode action server
     {"mode": "remove", "modem_id": "7"}
     {"mode": "clear"}
     {"mode": "ping",   "retry_count": 3, "task_timeout_s": 180.0}
+    {"mode": "broadcast", "message": "hello all"}
+    {"mode": "unicast",   "modem_id": "8", "message": "hello modem 8"}
 
 This tool builds that JSON, sends it to the action server, streams feedback, and
 prints the result. The action lives under the node namespace (the robot name),
@@ -21,6 +23,10 @@ Examples (run via ``ros2 run serial_ping_pkg modem_ping_cmd``):
 
     # Different vehicle namespace
     modem_ping_cmd add 7 --robot sam
+
+    # Broadcast messages
+    modem_ping_cmd broadcast "hello all"
+    modem_ping_cmd unicast 8 "hello modem 8"
 
     # Remove one modem / clear them all / hard-stop the running ping task
     modem_ping_cmd remove 7
@@ -37,6 +43,23 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 
 from smarc_msgs.action import BaseAction
+
+DEFAULT_PAYLOAD_MAX_BYTES = 64
+
+def _message_from_cli(parts: list[str], max_bytes: int) -> str:
+    """Build a payload message from CLI words and check the local byte limit."""
+    message = " ".join(parts)
+
+    if "\r" in message or "\n" in message:
+        raise SystemExit("payload message must not contain CR/LF")
+
+    byte_count = len(message.encode("utf-8"))
+    if byte_count > max_bytes:
+        raise SystemExit(
+            f"payload too large: {byte_count} bytes > {max_bytes} bytes"
+        )
+
+    return message
 
 
 def _build_goal_payload(args) -> dict:
@@ -57,6 +80,19 @@ def _build_goal_payload(args) -> dict:
             'mode': 'ping',
             'retry_count': int(args.retries),
             'task_timeout_s': float(args.timeout),
+        }
+
+    if mode == 'broadcast':
+        return {
+            'mode': 'broadcast',
+            'message': _message_from_cli(args.message, args.payload_max_bytes),
+        }
+
+    if mode == 'unicast':
+        return {
+            'mode': 'unicast',
+            'modem_id': str(int(args.modem_id)),
+            'message': _message_from_cli(args.message, args.payload_max_bytes),
         }
 
     raise SystemExit(f"Unknown mode: {mode!r}")
@@ -107,7 +143,7 @@ def _send_goal(node: Node, action_name: str, payload: dict, wait: bool) -> bool:
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='modem_ping_cmd',
-        description="Send add/remove/clear/ping/stop goals to the modem ping estimator.")
+        description="Send add/remove/clear/ping/broadcast/unicast/stop goals to the modem ping estimator.")
     parser.add_argument('--robot', default='lolo',
                         help="Robot namespace the node runs in (default %(default)s).")
     parser.add_argument('--action', default=None,
@@ -115,6 +151,10 @@ def main(argv=None):
                              "(e.g. /lolo/smarc_modem_ping).")
     parser.add_argument('--no-wait', action='store_true',
                         help="Send the goal and exit without waiting for the result.")
+    
+    parser.add_argument('--payload-max-bytes', type=int, default=DEFAULT_PAYLOAD_MAX_BYTES,
+                    help="Local max payload size check for broadcast/unicast "
+                         "(default %(default)s). The server still enforces its own limit.")
 
     sub = parser.add_subparsers(dest='mode', required=True)
 
@@ -133,6 +173,22 @@ def main(argv=None):
                         help="Retries after the first attempt (default %(default)s).")
     p_ping.add_argument('--timeout', type=float, default=180.0,
                         help="Overall task timeout in seconds (default %(default)s).")
+    
+
+    p_broadcast = sub.add_parser('broadcast', help="Send a broadcast acoustic message.")
+    p_broadcast.add_argument(
+        'message',
+        nargs='+',
+        help="Message payload. Quotes preserve spaces exactly; otherwise words are joined with spaces.",
+    )
+
+    p_unicast = sub.add_parser('unicast', help="Send a unicast acoustic message to one modem id.")
+    p_unicast.add_argument('modem_id', help="Destination modem id, 0-255.")
+    p_unicast.add_argument(
+        'message',
+        nargs='+',
+        help="Message payload. Quotes preserve spaces exactly; otherwise words are joined with spaces.",
+    )
 
     sub.add_parser('stop', help="Hard-stop: clears the list via the stop action server.")
 
