@@ -32,11 +32,13 @@ from rclpy.executors import MultiThreadedExecutor, ExternalShutdownException
 from serial_ping_pkg.ping_estimator.range_estimators import EkfRangeEstimator, LeastSquaresRangeEstimator
 
 """
-The node has a four-mode action server:
-  add      -> add modem ID, optionally with known depth
-  remove   -> remove one modem ID
-  clear    -> remove all modem IDs and delete markers
-  ping     -> start pinging/localizing all active modem IDs
+The node has a six-mode action server:
+  add       -> add modem ID, optionally with known depth
+  remove    -> remove one modem ID
+  clear     -> remove all modem IDs and delete markers
+  ping      -> start pinging/localizing all active modem IDs
+  broadcast -> send a user payload to all modems
+  unicast   -> send a user payload to one modem ID
 
 During ping mode, it sends $Pxxx commands, parses #RxxxTtttt responses,
 converts two-way travel time to range, accumulates range constraints, estimates
@@ -60,6 +62,8 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
       {"mode": "remove", "modem_id": "007"}
       {"mode": "clear"}
       {"mode": "ping", "retry_count": 3, "task_timeout_s": 180.0}
+      {"mode": "broadcast", "message": "hello"}
+      {"mode": "unicast", "modem_id": "007", "message": "hello"}
 
     Output:
       geographic_msgs/GeoPointStamped
@@ -90,6 +94,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.declare_parameter('teensy.enable_wire_on_startup', teensy_cfg.get('enable_wire_on_startup', True))
         self.declare_parameter('teensy.own_modem_id', teensy_cfg.get('own_modem_id', '101'))
         self.declare_parameter('teensy.command_terminator', teensy_cfg.get('command_terminator', '\r\n'))
+        self.declare_parameter('teensy.payload_max_bytes', teensy_cfg.get('payload_max_bytes', 64))
 
         self.declare_parameter('ping.max_retries', ping_cfg.get('max_retries', 3))
         self.declare_parameter('ping.response_timeout_s', ping_cfg.get('response_timeout_s', 8.0))
@@ -135,6 +140,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
         self.enable_wire_on_startup = bool(self.get_parameter('teensy.enable_wire_on_startup').value)
         self.own_modem_id = str(self.get_parameter('teensy.own_modem_id').value).zfill(3)
         self.command_terminator = self.get_parameter('teensy.command_terminator').value
+        self.payload_max_bytes = int(self.get_parameter('teensy.payload_max_bytes').value)
 
         self.default_retry_count = int(self.get_parameter('ping.max_retries').value)
         self.ping_response_timeout_s = float(self.get_parameter('ping.response_timeout_s').value)
@@ -358,6 +364,9 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
             self._clear_all_modems("cleared all modem ids")
             return True
 
+        if mode in ("broadcast", "unicast"):
+            return self._handle_payload_goal(mode, goal_request)
+
         if mode == "ping":
             if not self.modem_ids:
                 self.status_msg = "no modem ids to ping"
@@ -378,6 +387,107 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         self.get_logger().error(f"Unknown modem ping action mode: {mode!r}")
         return False
+
+    def _handle_payload_goal(self, mode: str, goal_request: dict) -> bool:
+        """Send a raw user payload through the modem.
+
+        The action JSON only carries the human-facing message. This node counts
+        the UTF-8 bytes, validates the modem limit, and builds the serial command.
+        """
+        if self.state == PingState.RUNNING:
+            self.status_msg = f"cannot {mode} while ping task is running"
+            self.action_done = True
+            self.get_logger().warn(self.status_msg)
+            return False
+
+        payload_bytes = self._parse_payload_bytes(goal_request)
+        if payload_bytes is None:
+            return False
+
+        modem_id = None
+        if mode == "unicast":
+            modem_id = self._parse_goal_modem_id(goal_request)
+            if modem_id is None:
+                return False
+
+        byte_count = len(payload_bytes)
+        if byte_count > self.payload_max_bytes:
+            self.status_msg = (
+                f"{mode} payload too large: {byte_count} bytes > "
+                f"max {self.payload_max_bytes} bytes"
+            )
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return False
+
+        cmd = self._build_payload_command(mode, payload_bytes, modem_id)
+        self.send_command(cmd)
+
+        target = "broadcast" if mode == "broadcast" else f"unicast to modem {modem_id}"
+        self.status_msg = f"{target}: sent {byte_count} byte(s)"
+        self.action_done = True
+        self.ping_action_result = None
+        self.get_logger().info(self.status_msg)
+        return True
+
+    def _parse_payload_bytes(self, goal_request: dict) -> bytes | None:
+        
+        raw = None
+        
+        if "message" in goal_request:
+            raw = goal_request["message"]
+
+        if raw is None:
+            self.status_msg = "payload goal missing 'message'"
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return None
+
+        if not isinstance(raw, str):
+            self.status_msg = f"payload message must be a string, got {type(raw).__name__}"
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return None
+
+        if "\r" in raw or "\n" in raw:
+            self.status_msg = "payload message must not contain CR/LF"
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return None
+
+        try:
+            payload_bytes = raw.encode("ascii")
+        except UnicodeEncodeError:
+            self.status_msg = "payload message must contain ASCII only"
+            self.action_done = True
+            self.get_logger().error(self.status_msg)
+            return None
+
+    def _build_payload_command(
+        self,
+        mode: str,
+        payload_bytes: bytes,
+        modem_id: str | None,
+    ) -> str:
+        """Build the serial command sent to the Teensy/modem bridge.
+
+        Current assumed firmware protocol:
+          broadcast: $B<NN><payload>
+          unicast:   $U<ID><NN><payload>
+
+        where <NN> is the payload byte count from 00 to 64 and <ID> is a
+        zero-padded three-digit modem id. Keep this as the only protocol-specific
+        function so the action-server logic does not care if the firmware syntax
+        changes later.
+        """
+        payload = payload_bytes.decode("utf-8")
+        byte_count = len(payload_bytes)
+
+        if mode == "broadcast":
+            return f"$B{byte_count:02d}{payload}"
+
+        assert modem_id is not None
+        return f"$U{modem_id}{byte_count:02d}{payload}"
 
     def _remove_modem(self, modem_id: str):
         if modem_id in self.modem_ids:
@@ -641,7 +751,7 @@ class ModemPingEstimatorNode(WireSafeSerialNode):
 
         # Local ack/echo from ping command.
         # Example: $P007
-        if line.startswith('$P'):
+        if line.startswith(('$P', '$B', '$U')):
             return
 
         # Success:
