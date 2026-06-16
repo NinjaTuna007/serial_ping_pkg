@@ -280,10 +280,12 @@ class BeaconNode(WireSafeSerialNode):
             # Keep only the action-client name before the status parenthetical,
             # e.g. "A_Chilling (Status.RUNNING)" -> "A_Chilling".
             tip = tip.split(' (')[0].strip()
-        if self.bt_basename:
+        if self.bt_basename and '/' in tip:
             # The action name is a ROS-topic-like path; keep the last segment,
-            # e.g. "/lolo/move_to" -> "move_to".
-            tip = tip.rsplit('/', 1)[-1]
+            # e.g. "/lolo/move_to" -> "move_to" or "ActionClient(/lolo/move_to)"
+            # -> "move_to". Strip wrapping punctuation left by parents like
+            # "ActionClient(...)".
+            tip = tip.rsplit('/', 1)[-1].strip(' ()[]{}')
         if self.bt_strip_prefix and tip.startswith(self.bt_strip_prefix):
             # Drop the useless leading prefix, e.g. "A_Chilling" -> "Chilling".
             tip = tip[len(self.bt_strip_prefix):]
