@@ -184,14 +184,14 @@ ros2 launch serial_ping_pkg owtt_beacon_node.launch \
 
 # Surface unit 1 — the designated COMMANDER (only one unit gets commander:=true)
 ros2 launch serial_ping_pkg owtt_surface_unit_node.launch \
-    serial_port:=/dev/succorfish unit_name:=floatsam_usv_1 own_modem_id:=067 \
-    beacon_name:=lolo beacon_modem_id:=007 commander:=true \
+    serial_port:=/dev/succorfish unit_name:=floatsam_usv_0 own_modem_id:=067 \
+    beacon_name:=lolo beacon_modem_id:=007 commander:=false \
     mqtt_host:=20.240.40.232 mqtt_port:=1884
 
 # Surface unit 2 — a listener (commander defaults to false)
 ros2 launch serial_ping_pkg owtt_surface_unit_node.launch \
-    serial_port:=/dev/succorfish unit_name:=floatsam_usv_2 own_modem_id:=069 \
-    beacon_name:=lolo beacon_modem_id:=007 \
+    serial_port:=/dev/succorfish unit_name:=floatsam_usv_1 own_modem_id:=069 \
+    beacon_name:=lolo beacon_modem_id:=007 commander:=true \
     mqtt_host:=20.240.40.232 mqtt_port:=1884
 
 # Inference (laptop) — hosts the /start /stop services
