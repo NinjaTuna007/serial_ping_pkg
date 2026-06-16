@@ -48,7 +48,20 @@ class MqttClient:
     def _log(self, msg, level='info'):
         if self.logger is None:
             return
-        getattr(self.logger, level, self.logger.info)(f"[mqtt] {msg}")
+        text = f"[mqtt] {msg}"
+        # NOTE: rclpy loggers key on the *caller location*, and refuse to change
+        # severity for a given location ("Logger severity cannot be changed
+        # between calls"). Route each severity through its own line so info/warn/
+        # error get distinct call sites; otherwise a warn from a disconnect
+        # callback throws and kills the paho client thread (no auto-reconnect).
+        if level == 'warn':
+            self.logger.warning(text)
+        elif level == 'error':
+            self.logger.error(text)
+        elif level == 'debug':
+            self.logger.debug(text)
+        else:
+            self.logger.info(text)
 
     # ------------------------------------------------------------------ lifecycle
     def set_message_handler(self, handler):
