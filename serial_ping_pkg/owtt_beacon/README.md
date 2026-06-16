@@ -43,10 +43,10 @@ list (see `beacon_telemetry.py`). Only enabled fields with a value are sent:
 | `D` | depth    | `D<m>` (metres, +down)                          |
 | `C` | svs      | `C<m/s>` (sound velocity from the beacon's SVS) |
 | `S` | speed    | `S<m/s>`                                        |
-| `B` | bt tip   | `B<text>` (sanitised, length-capped)            |
+| `B` | bt tip   | `B<text>` (sanitised, length-capped, name-only) |
 
 
-Example (`position,depth,svs,speed,bt`), as broadcast: `TEL:P58.823229,17.635998;D12.3;C1481.6;S1.20;BA_Chilling (Status.RUNNING)`
+Example (`position,depth,svs,speed,bt`), as broadcast: `TEL:P58.823229,17.635998;D12.3;C1481.6;S1.20;BChilling`
 
 Enable `svs` so the **surface units convert travel-time to range with the
 beacon's in-situ sound velocity** instead of a frozen default — the beacon reads
@@ -59,8 +59,14 @@ Enable `depth` when the beacon dives: the surface units measure a **slant**
 range, and the inference node uses the broadcast depth to recover the horizontal
 range it triangulates with (else it falls back to `inference.assumed_depth_m`).
 
-Keep it small — the Succorfish broadcast length is a 2-digit byte count and real
-acoustic payloads are limited, so the **default is `bt` only**.
+Keep it small — the Succorfish NM3 caps a packet at **64 bytes** (`TEL:` + the
+payload). The beacon enforces this via `max_onair_bytes`: if the encoded payload
+would overflow, it trims the free-text `bt` first (truncate → drop), then drops
+`speed`/`depth`/`svs`, always preserving `position`; a throttled warning tells
+you when it trims. To save bytes the `bt` tip is reduced to just the action-client
+name (`bt_name_only`, dropping `(Status.RUNNING)`) with the `A_` prefix stripped
+(`bt_strip_prefix`), e.g. `A_Chilling (Status.RUNNING)` → `Chilling`. The
+**default field set is `bt` only**.
 
 > Firmware note: `$K` is the host→Teensy command prefix (it would collide with
 > the modem's own `$T`), while `TEL:` is the on-air payload marker the receivers
@@ -147,7 +153,7 @@ Services (call from Foxglove / CLI):
 Reports are JSON strings, mirroring the smarc2 `str_json_mqtt_bridge`
 convention. Default broker is the smarc/WARA-PS broker `**20.240.40.232:1884`**
 (use `localhost:1889` for a local mosquitto). Topics live under the `**tuper`**
-context in an `**owtt_beacon**` subcontext:
+context in an `**owtt_beacon`** subcontext:
 
 ```
 tuper/owtt_beacon/<beacon>/range/<surface_unit>      (publish: each surface unit)
@@ -176,7 +182,7 @@ The subscribe `+` wildcard means the inference node automatically picks up
 # Beacon (on the beacon vehicle, e.g. lolo) — broadcast EVERYTHING, accept
 # commands from anyone, seed its GPS for the first 10 broadcasts, every 2 s.
 ros2 launch serial_ping_pkg owtt_beacon_node.launch \
-    serial_port:=/dev/ttyACM0 beacon_name:=lolo own_modem_id:=101 \
+    serial_port:=/dev/ttyACM0 beacon_name:=lolo own_modem_id:=007 \
     telemetry_fields:="['position','depth','svs','speed','bt']" \
     position_seed_count:=10 \
     send_period_s:=2.0 \
@@ -222,8 +228,11 @@ overridable as a launch argument.
 | `latlon_topic` / `depth_topic` / `speed_topic`   | derived                                                | override telemetry source topics                            |
 | `svs_topic` / `svs_msg_type` / `svs_field`       | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | sound-velocity source                                       |
 | `bt_topic` / `bt_json_field`                     | derived / `tip`                                        | bt source + JSON field                                      |
+| `bt_name_only`                                   | `true`                                                 | keep only the action-client name, drop `(Status.RUNNING)`   |
+| `bt_strip_prefix`                                | `A_`                                                   | strip this leading prefix from the bt name (`A_Chilling`→`Chilling`) |
 | `position_precision`                             | `6`                                                    | lat/lon decimals in payload                                 |
 | `max_bt_len`                                     | `32`                                                   | bt text cap (acoustic bandwidth)                            |
+| `max_onair_bytes`                                | `64`                                                   | modem packet cap; `TEL:`+payload auto-trimmed to fit        |
 | `send_period_s`                                  | `1.0`                                                  | **telemetry broadcast interval** (how often `$K` is pushed) |
 | `position_seed_count`                            | `0`                                                    | include GPS in first N broadcasts then drop it              |
 | `autostart`                                      | `false`                                                | begin broadcasting without waiting for `START`              |
@@ -239,33 +248,47 @@ overridable as a launch argument.
 ### `owtt_surface_unit_node.launch` arguments
 
 
-| arg                                              | default                                                | meaning                                                            |
-| ------------------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------ |
-| `serial_port` / `serial_port_fallback`           | `/dev/ttyACM0` / `/dev/ttyACM1`                        | Teensy serial port (+ fallback)                                    |
-| `serial_baudrate`                                | `115200`                                               | Teensy link baud                                                   |
-| `own_modem_id`                                   | `067`                                                  | this unit's own modem address (`$Y`)                               |
-| `mode`                                           | `receiver`                                             | `receiver`                                                         |
-| `owtt_delta_prefix`                              | `#I`                                                   | Teensy OWTT delta line prefix                                      |
-| `owtt_offset_us`                                 | `771600.0`                                             | constant offset subtracted from delta (µs)                         |
-| `min_range_m` / `max_range_m`                    | `0.0` / `0.0`                                          | drop ranges outside this band (neg = bad offset/sync; `max 0` = no cap) |
-| `default_sound_velocity`                         | `1500.0`                                               | fallback c if no beacon/local SVS                                  |
-| `sound_velocity_topic` / `_msg_type` / `_field`  | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | local SVS fallback source                                          |
-| `unit_name`                                      | `surface_unit`                                         | this unit's name (own-GPS namespace + report id)                   |
-| `unit_latlon_topic`                              | derived                                                | override own-position topic                                        |
-| `commander`                                      | `false`                                                | **exactly one** unit `true`: only it transmits acoustic START/STOP |
-| `beacon_name`                                    | `lolo`                                                 | beacon being tracked                                               |
-| `beacon_modem_id`                                | `101`                                                  | only accept this beacon's frames; empty = any                      |
-| `start_keyword` / `stop_keyword` / `ack_message` | `START` / `STOP` / `OK`                                | command words (must match the beacon)                              |
-| `mqtt_enabled`                                   | `true`                                                 | publish range reports to MQTT                                      |
-| `mqtt_host` / `mqtt_port`                        | `20.240.40.232` / `1884`                               | broker                                                             |
-| `mqtt_username` / `mqtt_password`                | `/`                                                    | broker auth (optional)                                             |
-| `mqtt_topic_prefix`                              | `tuper/owtt_beacon`                                    | report topic context/subcontext                                    |
-| `mqtt_qos`                                       | `0`                                                    | MQTT publish QoS (command channel always uses QoS 1)               |
+| arg                                              | default                                                | meaning                                                                       |
+| ------------------------------------------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `serial_port` / `serial_port_fallback`           | `/dev/ttyACM0` / `/dev/ttyACM1`                        | Teensy serial port (+ fallback)                                               |
+| `serial_baudrate`                                | `115200`                                               | Teensy link baud                                                              |
+| `own_modem_id`                                   | `067`                                                  | this unit's own modem address (`$Y`)                                          |
+| `mode`                                           | `receiver`                                             | `receiver`                                                                    |
+| `owtt_delta_prefix`                              | `#I`                                                   | Teensy OWTT delta line prefix                                                 |
+| `owtt_offset_us`                                 | `771600.0`                                             | constant offset subtracted from delta (µs); fallback when not auto-calibrated |
+| `min_range_m` / `max_range_m`                    | `0.0` / `0.0`                                          | drop ranges outside this band (neg = bad offset/sync; `max 0` = no cap)       |
+| `auto_calibrate`                                 | `true`                                                 | learn `offset_us` per modem pair from the beacon's seeded GPS                 |
+| `calib_min_samples` / `calib_window`             | `5` / `20`                                             | seeded samples to lock the offset / rolling-median window                     |
+| `default_sound_velocity`                         | `1500.0`                                               | fallback c if no beacon/local SVS                                             |
+| `sound_velocity_topic` / `_msg_type` / `_field`  | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | local SVS fallback source                                                     |
+| `unit_name`                                      | `surface_unit`                                         | this unit's name (own-GPS namespace + report id)                              |
+| `unit_latlon_topic`                              | derived                                                | override own-position topic                                                   |
+| `commander`                                      | `false`                                                | **exactly one** unit `true`: only it transmits acoustic START/STOP            |
+| `beacon_name`                                    | `lolo`                                                 | beacon being tracked                                                          |
+| `beacon_modem_id`                                | `101`                                                  | only accept this beacon's frames; empty = any                                 |
+| `start_keyword` / `stop_keyword` / `ack_message` | `START` / `STOP` / `OK`                                | command words (must match the beacon)                                         |
+| `mqtt_enabled`                                   | `true`                                                 | publish range reports to MQTT                                                 |
+| `mqtt_host` / `mqtt_port`                        | `20.240.40.232` / `1884`                               | broker                                                                        |
+| `mqtt_username` / `mqtt_password`                | `/`                                                    | broker auth (optional)                                                        |
+| `mqtt_topic_prefix`                              | `tuper/owtt_beacon`                                    | report topic context/subcontext                                               |
+| `mqtt_qos`                                       | `0`                                                    | MQTT publish QoS (command channel always uses QoS 1)                          |
 
 
 > Sound velocity priority at the surface unit: **beacon's broadcast `svs`** →
 > local SVS topic → `default_sound_velocity`. Enable `svs` on the beacon to use
 > the in-situ value.
+
+> **Auto-calibrated offset (per modem pair).** Rather than trusting a fixed
+> (and easily wrong) `owtt_offset_us`, each surface unit self-calibrates while
+> the beacon **seeds its GPS** in telemetry (`position_seed_count`). Knowing the
+> true range (own GPS ↔ beacon GPS, slant-corrected with depth) and the measured
+> `delta_us`, it solves `offset_us = delta_us − true_slant / c · 1e6`, folds it
+> into a running median, **locks** after `calib_min_samples`, and uses that value
+> for the rest of the run (when the beacon stops sending position). The chosen
+> offset and its source appear in the report as `offset_us` / `offset_src`
+> (`config` → `auto-provisional` → `auto-locked`). Set `position_seed_count ≥ calib_min_samples` on the beacon so every pair has enough seeds to lock.
+> Auto-calibration only removes a *constant* bias — it cannot fix `delta_us` that
+> drifts because the two modems aren't sharing a PPS-disciplined epoch.
 
 ### `owtt_inference_node.launch` command arguments
 

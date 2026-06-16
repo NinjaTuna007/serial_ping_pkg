@@ -23,8 +23,11 @@
     <arg name="svs_field" default="svs" description="Field on the SVS message holding sound velocity"/>
     <arg name="bt_topic" default="" description="Override beacon bt topic"/>
     <arg name="bt_json_field" default="tip" description="Field pulled from the bt JSON"/>
+    <arg name="bt_name_only" default="true" description="Keep only the action-client name, drop the status"/>
+    <arg name="bt_strip_prefix" default="A_" description="Strip this leading prefix from the bt name"/>
     <arg name="position_precision" default="6" description="Decimal places for lat/lon in the payload"/>
     <arg name="max_bt_len" default="32" description="Cap on bt text length (acoustic bandwidth)"/>
+    <arg name="max_onair_bytes" default="64" description="Modem packet cap; TEL:payload trimmed to fit"/>
     <arg name="send_period_s" default="1.0" description="How often telemetry is pushed to the Teensy"/>
     <arg name="position_seed_count" default="0" description="Include own GPS in the first N broadcasts then drop it (0=off)"/>
 
@@ -57,8 +60,11 @@
         <param name="owtt.sound_velocity_field" type="str" value="$(var svs_field)"/>
         <param name="beacon.bt_topic" type="str" value="$(var bt_topic)"/>
         <param name="beacon.bt_json_field" type="str" value="$(var bt_json_field)"/>
+        <param name="beacon.bt_name_only" value="$(var bt_name_only)"/>
+        <param name="beacon.bt_strip_prefix" type="str" value="$(var bt_strip_prefix)"/>
         <param name="beacon.position_precision" value="$(var position_precision)"/>
         <param name="beacon.max_bt_len" value="$(var max_bt_len)"/>
+        <param name="beacon.max_onair_bytes" value="$(var max_onair_bytes)"/>
         <param name="beacon.send_period_s" value="$(var send_period_s)"/>
         <param name="beacon.position_seed_count" value="$(var position_seed_count)"/>
         <param name="beacon.autostart" value="$(var autostart)"/>

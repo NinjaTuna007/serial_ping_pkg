@@ -15,6 +15,9 @@
     <arg name="owtt_offset_us" default="771600.0" description="Constant offset subtracted from delta (microseconds)"/>
     <arg name="min_range_m" default="0.0" description="Drop ranges below this (negatives = bad offset / unsynced clocks)"/>
     <arg name="max_range_m" default="0.0" description="Drop ranges above this (0 = no upper cap)"/>
+    <arg name="auto_calibrate" default="true" description="Learn offset_us per modem pair from the beacon's seeded GPS"/>
+    <arg name="calib_min_samples" default="5" description="Seeded samples needed to lock the auto offset"/>
+    <arg name="calib_window" default="20" description="Rolling sample window for the running-median offset"/>
     <arg name="default_sound_velocity" default="1500.0" description="Fallback sound speed (m/s)"/>
     <arg name="sound_velocity_topic" default="/lolo/sensors/svs" description="Live sound-velocity topic"/>
     <arg name="sound_velocity_msg_type" default="svs_interfaces/msg/SVS" description="Sound-velocity msg type"/>
@@ -50,6 +53,9 @@
         <param name="owtt.offset_us" value="$(var owtt_offset_us)"/>
         <param name="owtt.min_range_m" value="$(var min_range_m)"/>
         <param name="owtt.max_range_m" value="$(var max_range_m)"/>
+        <param name="owtt.auto_calibrate" value="$(var auto_calibrate)"/>
+        <param name="owtt.calib_min_samples" value="$(var calib_min_samples)"/>
+        <param name="owtt.calib_window" value="$(var calib_window)"/>
         <param name="owtt.default_sound_velocity" value="$(var default_sound_velocity)"/>
         <param name="owtt.sound_velocity_topic" type="str" value="$(var sound_velocity_topic)"/>
         <param name="owtt.sound_velocity_msg_type" type="str" value="$(var sound_velocity_msg_type)"/>

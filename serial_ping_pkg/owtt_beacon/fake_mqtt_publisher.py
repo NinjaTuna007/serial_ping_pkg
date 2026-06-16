@@ -258,6 +258,9 @@ def main(argv=None):
                     'range_m': round(rng, 2),
                     'delta_us': round(rng / svs * 1e6 + args.offset_us, 1),
                     'offset_us': args.offset_us,
+                    # Fake ranges come straight from geometry, i.e. as if the unit
+                    # had already auto-calibrated its per-pair offset.
+                    'offset_src': 'auto-locked',
                     'sound_velocity': round(svs, 1),
                     'sound_velocity_src': 'beacon',
                     'telemetry': telemetry,

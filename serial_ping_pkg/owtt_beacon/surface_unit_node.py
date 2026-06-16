@@ -8,6 +8,11 @@ broadcasts. For each telemetry frame it:
 
          range = (delta_us - offset_us) * 1e-6 * sound_velocity
 
+     ``offset_us`` can be **auto-calibrated per modem pair**: while the beacon
+     seeds its own GPS in telemetry (``position_seed_count``), the unit knows the
+     true range (own GPS vs. beacon GPS) and solves ``offset_us = delta_us -
+     true_slant / c * 1e6``, then locks it and uses it after seeding stops.
+
   3. publishes the range locally on ROS, and
   4. publishes a JSON "range report" (its own GPS position + the measured range
      + the decoded beacon telemetry) straight to an MQTT broker, mirroring the
@@ -19,6 +24,7 @@ reset to WIRE mode on exit.
 """
 
 import json
+import math
 import time
 
 import rclpy
@@ -60,6 +66,12 @@ class SurfaceUnitNode(WireSafeSerialNode):
         # dropped before it reaches MQTT / triangulation.
         self.declare_parameter('owtt.min_range_m', owtt_cfg.get('min_range_m', 0.0))
         self.declare_parameter('owtt.max_range_m', owtt_cfg.get('max_range_m', 0.0))
+        # Auto-calibrate offset_us per modem pair from the beacon's seeded GPS:
+        # offset = delta_us - true_slant_range / c * 1e6. Locks after min_samples
+        # and is then used in place of the configured owtt.offset_us.
+        self.declare_parameter('owtt.auto_calibrate', owtt_cfg.get('auto_calibrate', True))
+        self.declare_parameter('owtt.calib_min_samples', owtt_cfg.get('calib_min_samples', 5))
+        self.declare_parameter('owtt.calib_window', owtt_cfg.get('calib_window', 20))
         self.declare_parameter('owtt.default_sound_velocity', owtt_cfg.get('default_sound_velocity', 1500.0))
         self.declare_parameter('owtt.sound_velocity_topic', owtt_cfg.get('sound_velocity_topic', '/lolo/sensors/svs'))
         self.declare_parameter('owtt.sound_velocity_msg_type', owtt_cfg.get('sound_velocity_msg_type', 'svs_interfaces/msg/SVS'))
@@ -103,6 +115,13 @@ class SurfaceUnitNode(WireSafeSerialNode):
         self.offset_us = self.get_parameter('owtt.offset_us').get_parameter_value().double_value
         self.min_range_m = self.get_parameter('owtt.min_range_m').get_parameter_value().double_value
         self.max_range_m = self.get_parameter('owtt.max_range_m').get_parameter_value().double_value
+        self.auto_calibrate = self.get_parameter('owtt.auto_calibrate').get_parameter_value().bool_value
+        self.calib_min_samples = self.get_parameter('owtt.calib_min_samples').get_parameter_value().integer_value
+        self.calib_window = self.get_parameter('owtt.calib_window').get_parameter_value().integer_value
+        # Per-modem-pair offset calibration. _configured_offset_us is the fixed
+        # fallback; _calib[modem_id] holds the auto-estimated offset once seeded.
+        self._configured_offset_us = self.offset_us
+        self._calib = {}              # modem_id -> {'samples': [..], 'offset': float, 'locked': bool}
         self.default_sound_velocity = self.get_parameter('owtt.default_sound_velocity').get_parameter_value().double_value
         self.sound_velocity_topic = self.get_parameter('owtt.sound_velocity_topic').get_parameter_value().string_value
         self.sound_velocity_msg_type = self.get_parameter('owtt.sound_velocity_msg_type').get_parameter_value().string_value
@@ -346,22 +365,28 @@ class SurfaceUnitNode(WireSafeSerialNode):
                 "Got OWTT delta with no preceding telemetry frame, ignoring.",
                 throttle_duration_sec=5.0)
             return
+        modem_id = self.pending['modem_id']
+        telemetry = self.pending['telemetry']
         # Prefer the beacon's broadcast in-situ sound velocity over our own
         # SVS topic / frozen default.
         c, c_src = self.sound_velocity, 'local'
-        telem_svs = self.pending['telemetry'].get('svs')
+        telem_svs = telemetry.get('svs')
         if telem_svs is not None:
             try:
                 c, c_src = float(telem_svs), 'beacon'
             except (TypeError, ValueError):
                 pass
-        rng = ti.delta_to_range_m(delta_us, self.offset_us, c)
+
+        # Resolve the offset for this modem pair (auto-calibrated if the beacon
+        # is seeding its GPS; otherwise the configured fallback).
+        offset_us, offset_src = self._resolve_offset(modem_id, delta_us, c, telemetry)
+        rng = ti.delta_to_range_m(delta_us, offset_us, c)
 
         # Sanity guard: an OWTT range can't be negative, and is usually bounded.
         if rng < self.min_range_m or (self.max_range_m > 0.0 and rng > self.max_range_m):
             if rng < 0.0:
-                why = (f"delta_us ({delta_us}) < offset_us ({self.offset_us:.0f}): "
-                       "owtt_offset_us is too large for this link (mis-calibrated) "
+                why = (f"delta_us ({delta_us}) < offset_us ({offset_us:.0f}): "
+                       "offset is too large for this link (mis-calibrated) "
                        "or the modems' clocks aren't PPS-synchronised")
             elif rng < self.min_range_m:
                 why = f"below owtt.min_range_m ({self.min_range_m:.1f} m)"
@@ -369,7 +394,7 @@ class SurfaceUnitNode(WireSafeSerialNode):
                 why = f"above owtt.max_range_m ({self.max_range_m:.1f} m)"
             self.get_logger().warn(
                 f"Dropping unphysical range {rng:.1f} m ({why}); "
-                f"delta={delta_us} us, offset={self.offset_us:.0f} us, c={c:.1f} m/s.",
+                f"delta={delta_us} us, offset={offset_us:.0f} us ({offset_src}), c={c:.1f} m/s.",
                 throttle_duration_sec=5.0)
             self.pending = None
             return
@@ -387,7 +412,8 @@ class SurfaceUnitNode(WireSafeSerialNode):
             'unit_lon': self.unit_position[1] if self.unit_position else None,
             'range_m': float(rng),
             'delta_us': float(delta_us),
-            'offset_us': float(self.offset_us),
+            'offset_us': float(offset_us),
+            'offset_src': offset_src,
             'sound_velocity': float(c),
             'sound_velocity_src': c_src,
             'telemetry': self._jsonable_telemetry(self.pending['telemetry']),
@@ -407,8 +433,69 @@ class SurfaceUnitNode(WireSafeSerialNode):
                 "not received yet); report has null position.", throttle_duration_sec=5.0)
         self.get_logger().info(
             f"[{self.unit_name}] beacon '{self.beacon_name}' delta={delta_us} us, "
-            f"c={c:.1f} m/s ({c_src}) -> range={rng:.2f} m")
+            f"offset={offset_us:.0f} us ({offset_src}), c={c:.1f} m/s ({c_src}) "
+            f"-> range={rng:.2f} m")
         self.pending = None
+
+    def _resolve_offset(self, modem_id, delta_us, c, telemetry):
+        """Return (offset_us, source) for this modem pair.
+
+        When the beacon seeds its GPS (telemetry carries ``position``) and we
+        know our own position, derive a per-sample offset from the true slant
+        range and fold it into a running median. Lock after ``calib_min_samples``
+        and stick to it; otherwise fall back to the configured offset.
+        """
+        entry = self._calib.get(modem_id)
+        beacon_pos = telemetry.get('position')
+        if (self.auto_calibrate and beacon_pos is not None
+                and self.unit_position is not None and c > 0.0):
+            depth = telemetry.get('depth') or 0.0
+            horizontal = self._geodesic_m(self.unit_position, beacon_pos)
+            slant = math.hypot(horizontal, depth)
+            sample = float(delta_us) - (slant / c) * 1e6
+            if entry is None:
+                entry = {'samples': [], 'offset': None, 'locked': False}
+                self._calib[modem_id] = entry
+            if not entry['locked']:
+                entry['samples'].append(sample)
+                if len(entry['samples']) > self.calib_window:
+                    entry['samples'] = entry['samples'][-self.calib_window:]
+                entry['offset'] = self._median(entry['samples'])
+                if len(entry['samples']) >= self.calib_min_samples:
+                    entry['locked'] = True
+                    self.get_logger().info(
+                        f"Auto-calibrated offset for pair (self {self.own_modem_id} "
+                        f"<-> beacon {modem_id}): {entry['offset']:.0f} us from "
+                        f"{len(entry['samples'])} seeded samples "
+                        f"(configured was {self._configured_offset_us:.0f} us). Locked.")
+                else:
+                    self.get_logger().info(
+                        f"Calibrating offset for beacon {modem_id}: "
+                        f"{len(entry['samples'])}/{self.calib_min_samples} samples, "
+                        f"provisional {entry['offset']:.0f} us "
+                        f"(true range {slant:.1f} m).", throttle_duration_sec=2.0)
+        if entry is not None and entry['offset'] is not None:
+            return entry['offset'], ('auto-locked' if entry['locked'] else 'auto-provisional')
+        return self._configured_offset_us, 'config'
+
+    @staticmethod
+    def _median(xs):
+        s = sorted(xs)
+        n = len(s)
+        if n == 0:
+            return 0.0
+        mid = n // 2
+        return s[mid] if n % 2 else 0.5 * (s[mid - 1] + s[mid])
+
+    @staticmethod
+    def _geodesic_m(a, b):
+        """Distance (m) between (lat, lon) pairs; equirectangular, fine for <km."""
+        lat1, lon1 = a
+        lat2, lon2 = b
+        mean_lat = math.radians((lat1 + lat2) * 0.5)
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1) * math.cos(mean_lat)
+        return 6371000.0 * math.hypot(dlat, dlon)
 
     def to_wire_mode(self):
         # Stop the MQTT loop alongside the Teensy reset.

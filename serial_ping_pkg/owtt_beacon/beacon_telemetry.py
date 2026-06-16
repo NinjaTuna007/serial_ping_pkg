@@ -56,8 +56,15 @@ def sanitize(text):
     return s.strip()
 
 
+# Order in which fields are sacrificed when the payload exceeds the on-air
+# budget. The numeric fields the localization math needs (position, svs, depth,
+# speed) are kept; the long free-text bt is trimmed/dropped first. position is
+# never auto-dropped (it is critical for branch-locking + offset calibration).
+_TRIM_ORDER = ('bt', 'speed', 'depth', 'svs')
+
+
 def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=None,
-                     bt=None, precision=6, max_bt_len=32):
+                     bt=None, precision=6, max_bt_len=32, max_payload_len=0):
     """Encode the enabled telemetry fields into the post-marker payload string.
 
     ``enabled_fields`` is an iterable of field names (subset of
@@ -65,24 +72,52 @@ def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=
     emitted. ``position`` is ``(lat, lon)``. Returns the payload WITHOUT the
     ``TEL:`` marker (the Teensy prepends it), suitable for
     ``teensy_interface.build_telemetry_command``.
+
+    ``max_payload_len`` (0 = unlimited) bounds the encoded payload so the on-air
+    frame (``TEL:`` + payload) fits the modem's packet limit. When exceeded, the
+    free-text ``bt`` is truncated then dropped, then ``speed``/``depth``/``svs``
+    are dropped in turn; ``position`` is always preserved.
     """
     enabled = set(enabled_fields)
-    parts = []
+    tokens = {}
     for field in DEFAULT_FIELD_ORDER:
         if field not in enabled:
             continue
         if field == 'position' and position is not None:
             lat, lon = position
-            parts.append(f"P{float(lat):.{precision}f},{float(lon):.{precision}f}")
+            tokens['position'] = f"P{float(lat):.{precision}f},{float(lon):.{precision}f}"
         elif field == 'depth' and depth is not None:
-            parts.append(f"D{float(depth):.1f}")
+            tokens['depth'] = f"D{float(depth):.1f}"
         elif field == 'svs' and svs is not None:
-            parts.append(f"C{float(svs):.1f}")
+            tokens['svs'] = f"C{float(svs):.1f}"
         elif field == 'speed' and speed is not None:
-            parts.append(f"S{float(speed):.2f}")
+            tokens['speed'] = f"S{float(speed):.2f}"
         elif field == 'bt' and bt is not None:
-            parts.append("B" + sanitize(bt)[:max_bt_len])
-    return ';'.join(parts)
+            tokens['bt'] = "B" + sanitize(bt)[:max_bt_len]
+
+    def assemble(toks):
+        return ';'.join(toks[f] for f in DEFAULT_FIELD_ORDER if f in toks)
+
+    payload = assemble(tokens)
+    if max_payload_len and len(payload) > max_payload_len:
+        # 1) Shrink the bt free text to claw back the overflow.
+        if 'bt' in tokens:
+            over = len(payload) - max_payload_len
+            bt_text = tokens['bt'][1:]
+            kept = bt_text[:max(0, len(bt_text) - over)]
+            if kept:
+                tokens['bt'] = "B" + kept
+            else:
+                tokens.pop('bt')
+            payload = assemble(tokens)
+        # 2) Still too long: drop whole fields in trim-priority order.
+        for field in _TRIM_ORDER:
+            if len(payload) <= max_payload_len:
+                break
+            if field in tokens:
+                tokens.pop(field)
+                payload = assemble(tokens)
+    return payload
 
 
 def decode_telemetry(payload):

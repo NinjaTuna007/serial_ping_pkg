@@ -32,6 +32,9 @@ owtt:
   offset_us: 771600.0           # calibrated (lolo <-> floatsam, Askö 2026)
   min_range_m: 0.0              # drop ranges below this (negatives = bad offset / unsynced clocks)
   max_range_m: 0.0              # drop ranges above this (0 = no upper cap)
+  auto_calibrate: true          # learn offset_us per modem pair from the beacon's seeded GPS
+  calib_min_samples: 5          # seeded samples to lock the auto offset (needs position_seed_count >= this)
+  calib_window: 20              # rolling sample window for the running median
   default_sound_velocity: 1500.0
   sound_velocity_topic: "/lolo/sensors/svs"
   sound_velocity_msg_type: "svs_interfaces/msg/SVS"
@@ -55,8 +58,11 @@ beacon:
   speed_topic: ""               # default /<name>/smarc/speed   (Float32)
   bt_topic: ""                  # default /<name>/waraps/sensor/bt (String JSON)
   bt_json_field: "tip"          # field pulled out of the bt JSON
+  bt_name_only: true            # keep only the action-client name, drop "(Status.RUNNING)"
+  bt_strip_prefix: "A_"         # strip this leading prefix from the bt name ("A_Chilling" -> "Chilling")
   position_precision: 6         # decimal places for lat/lon in the payload
   max_bt_len: 32                # cap bt text length (acoustic bandwidth)
+  max_onair_bytes: 64           # Succorfish NM3 packet cap; TEL:<payload> is trimmed to fit
   send_period_s: 1.0            # how often the beacon pushes telemetry to the Teensy
   position_seed_count: 0        # include own GPS in the first N broadcasts then drop it (0 = off)
   # Broadcast START/STOP command channel. The beacon does NOT broadcast until it

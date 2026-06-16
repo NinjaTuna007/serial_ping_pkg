@@ -85,8 +85,17 @@ class BeaconNode(WireSafeSerialNode):
         self.declare_parameter('owtt.sound_velocity_field', owtt_cfg.get('sound_velocity_field', 'svs'))
         self.declare_parameter('beacon.bt_topic', beacon_cfg.get('bt_topic', ''))
         self.declare_parameter('beacon.bt_json_field', beacon_cfg.get('bt_json_field', 'tip'))
+        # Keep only the action-client name from the bt tip, dropping the trailing
+        # status, e.g. "A_Chilling (Status.RUNNING)" -> "A_Chilling" (saves bytes).
+        self.declare_parameter('beacon.bt_name_only', beacon_cfg.get('bt_name_only', True))
+        # Strip this leading prefix from the bt name, e.g. "A_Chilling" ->
+        # "Chilling" (the "A_" carries no info). Empty = keep as-is.
+        self.declare_parameter('beacon.bt_strip_prefix', beacon_cfg.get('bt_strip_prefix', 'A_'))
         self.declare_parameter('beacon.position_precision', beacon_cfg.get('position_precision', 6))
         self.declare_parameter('beacon.max_bt_len', beacon_cfg.get('max_bt_len', 32))
+        # Max on-air bytes for the modem packet (Succorfish NM3 caps at 64). The
+        # encoded telemetry payload is trimmed so that TEL:<payload> fits this.
+        self.declare_parameter('beacon.max_onair_bytes', beacon_cfg.get('max_onair_bytes', 64))
         self.declare_parameter('beacon.send_period_s', beacon_cfg.get('send_period_s', 1.0))
         # Include the beacon's own GPS in the first N broadcasts (even if
         # 'position' is not a permanent field) so the inference node can lock the
@@ -123,8 +132,13 @@ class BeaconNode(WireSafeSerialNode):
         self.svs_field = self.get_parameter('owtt.sound_velocity_field').get_parameter_value().string_value
         self.bt_topic = self.get_parameter('beacon.bt_topic').get_parameter_value().string_value
         self.bt_json_field = self.get_parameter('beacon.bt_json_field').get_parameter_value().string_value
+        self.bt_name_only = self.get_parameter('beacon.bt_name_only').get_parameter_value().bool_value
+        self.bt_strip_prefix = self.get_parameter('beacon.bt_strip_prefix').get_parameter_value().string_value
         self.position_precision = self.get_parameter('beacon.position_precision').get_parameter_value().integer_value
         self.max_bt_len = self.get_parameter('beacon.max_bt_len').get_parameter_value().integer_value
+        self.max_onair_bytes = self.get_parameter('beacon.max_onair_bytes').get_parameter_value().integer_value
+        # Budget for the encoded payload = on-air limit minus the TEL: marker.
+        self._max_payload_len = max(0, self.max_onair_bytes - len(ti.TELEMETRY_MARKER))
         self.send_period_s = self.get_parameter('beacon.send_period_s').get_parameter_value().double_value
         self.position_seed_count = self.get_parameter('beacon.position_seed_count').get_parameter_value().integer_value
 
@@ -255,9 +269,17 @@ class BeaconNode(WireSafeSerialNode):
         raw = msg.data
         try:
             obj = json.loads(raw)
-            self.latest_bt = str(obj.get(self.bt_json_field, raw))
+            tip = str(obj.get(self.bt_json_field, raw))
         except (ValueError, TypeError):
-            self.latest_bt = raw
+            tip = raw
+        if self.bt_name_only:
+            # Keep only the action-client name before the status parenthetical,
+            # e.g. "A_Chilling (Status.RUNNING)" -> "A_Chilling".
+            tip = tip.split(' (')[0].strip()
+        if self.bt_strip_prefix and tip.startswith(self.bt_strip_prefix):
+            # Drop the useless leading prefix, e.g. "A_Chilling" -> "Chilling".
+            tip = tip[len(self.bt_strip_prefix):]
+        self.latest_bt = tip
 
     # ------------------------------------------------------------------ runtime
 
@@ -357,12 +379,26 @@ class BeaconNode(WireSafeSerialNode):
             bt=self.latest_bt,
             precision=self.position_precision,
             max_bt_len=self.max_bt_len,
+            max_payload_len=self._max_payload_len,
         )
         if not payload:
             self.get_logger().info(
                 "No telemetry available yet for the enabled fields; nothing to send.",
                 throttle_duration_sec=5.0)
             return
+
+        # Warn (throttled) if the full payload had to be trimmed to fit the modem.
+        if self._max_payload_len:
+            full = bt_codec.encode_telemetry(
+                fields, position=self.latest_position, depth=self.latest_depth,
+                svs=self.latest_svs, speed=self.latest_speed, bt=self.latest_bt,
+                precision=self.position_precision, max_bt_len=self.max_bt_len)
+            if len(full) > self._max_payload_len:
+                self.get_logger().warn(
+                    f"Telemetry payload {len(full)}B + '{ti.TELEMETRY_MARKER}' exceeds the "
+                    f"{self.max_onair_bytes}B on-air limit; trimmed to {len(payload)}B "
+                    f"('{payload}'). Shorten bt (beacon.max_bt_len), drop fields, or lower "
+                    f"beacon.position_precision.", throttle_duration_sec=10.0)
 
         try:
             self.send_command(ti.build_telemetry_command(payload))
