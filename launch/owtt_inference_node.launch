@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="beacon_name" default="lolo" description="Beacon being triangulated; empty = any"/>
+
+    <!-- MQTT downlink (subscribe to surface-unit range reports) -->
+    <arg name="mqtt_host" default="20.240.40.232" description="MQTT broker host (smarc/WARA-PS)"/>
+    <arg name="mqtt_port" default="1884" description="MQTT broker port"/>
+    <arg name="mqtt_username" default="" description="MQTT username (optional)"/>
+    <arg name="mqtt_password" default="" description="MQTT password (optional)"/>
+    <arg name="mqtt_topic_prefix" default="tuper/owtt_beacon" description="MQTT topic prefix (context/subcontext)"/>
+
+    <!-- Triangulation / multilateration -->
+    <arg name="update_period_s" default="1.0" description="How often to recompute the fix"/>
+    <arg name="freshness_window_s" default="10.0" description="Ignore reports older than this"/>
+    <arg name="min_units" default="2" description="Min fresh receivers needed; uses ALL available"/>
+    <arg name="frame_id" default="map" description="NavSatFix header frame_id"/>
+    <arg name="first_fix_prefer" default="north" description="Disambiguate first fix: north|south|east|west"/>
+    <arg name="publish_both" default="true" description="With 2 receivers, also publish the mirror fix on .../estimate_alt"/>
+    <arg name="assumed_depth_m" default="0.0" description="Beacon depth (m) if telemetry has none; slant to horizontal"/>
+    <arg name="motion_model" default="true" description="2-hypothesis CV tracker: reject the mirror over time"/>
+    <arg name="max_speed_mps" default="2.0" description="XUUV top speed; caps per-update displacement"/>
+    <arg name="use_reported_position" default="true" description="Lock the branch with the beacon's own GPS when present"/>
+
+    <!-- START/STOP command services -->
+    <arg name="command_timeout_s" default="10.0" description="Give up if no beacon OK within this (s)"/>
+    <arg name="command_repeat_s" default="1.5" description="Re-publish the MQTT command this often until acked (s)"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="owtt_inference_node"
+          name="owtt_inference_node"
+          output="screen">
+        <param name="beacon.name" type="str" value="$(var beacon_name)"/>
+        <param name="mqtt.host" type="str" value="$(var mqtt_host)"/>
+        <param name="mqtt.port" value="$(var mqtt_port)"/>
+        <param name="mqtt.username" type="str" value="$(var mqtt_username)"/>
+        <param name="mqtt.password" type="str" value="$(var mqtt_password)"/>
+        <param name="mqtt.topic_prefix" type="str" value="$(var mqtt_topic_prefix)"/>
+        <param name="inference.update_period_s" value="$(var update_period_s)"/>
+        <param name="inference.freshness_window_s" value="$(var freshness_window_s)"/>
+        <param name="inference.min_units" value="$(var min_units)"/>
+        <param name="inference.frame_id" type="str" value="$(var frame_id)"/>
+        <param name="inference.first_fix_prefer" type="str" value="$(var first_fix_prefer)"/>
+        <param name="inference.publish_both" value="$(var publish_both)"/>
+        <param name="inference.assumed_depth_m" value="$(var assumed_depth_m)"/>
+        <param name="inference.motion_model" value="$(var motion_model)"/>
+        <param name="inference.max_speed_mps" value="$(var max_speed_mps)"/>
+        <param name="inference.use_reported_position" value="$(var use_reported_position)"/>
+        <param name="inference.command_timeout_s" value="$(var command_timeout_s)"/>
+        <param name="inference.command_repeat_s" value="$(var command_repeat_s)"/>
+    </node>
+</launch>

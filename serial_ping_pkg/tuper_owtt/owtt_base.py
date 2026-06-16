@@ -21,6 +21,7 @@ import signal
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 
 from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 
@@ -93,7 +94,7 @@ def run_node(node_factory, args=None):
         node = node_factory()
         if getattr(node, 'ser', None) is not None:
             rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         if node is not None:

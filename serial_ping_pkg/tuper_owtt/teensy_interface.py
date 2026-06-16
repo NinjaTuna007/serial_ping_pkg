@@ -85,6 +85,66 @@ def build_gps_command(lat, lon, prefix="$G"):
     return f"{prefix}{lat},{lon}"
 
 
+# Marker that the Teensy prepends to a telemetry broadcast payload. A received
+# broadcast whose data starts with this marker is a telemetry frame (and the
+# Teensy still emits an #I timing line for it, so it is range-able). A
+# multi-char marker (vs a bare 'T') avoids mistaking ordinary broadcast data
+# for telemetry.
+TELEMETRY_MARKER = "TEL:"
+
+
+def build_telemetry_command(payload, prefix="$K"):
+    """Build the ``$K<payload>`` telemetry-update command for the transmitter.
+
+    ``$K`` is used (not ``$T``) because ``$T`` is an existing Succorfish modem
+    command; the host->Teensy prefix must not collide with it. The Teensy
+    stores ``payload`` with a leading ``TEL:`` marker and broadcasts it as
+    ``$Bnn TEL:<payload>`` on its PPS schedule, so receivers see
+    ``#B<id><nn>TEL:<payload>``.
+
+    ``payload`` is opaque, host-encoded telemetry (see
+    ``owtt_beacon.beacon_telemetry``); it must NOT include the ``TEL:`` marker
+    (the firmware adds it) and must be free of CR/LF.
+    """
+    return f"{prefix}{payload}"
+
+
+def build_broadcast_command(data, prefix="$B"):
+    """Build a one-shot Succorfish broadcast command ``$B<nn><data>``.
+
+    ``nn`` is the 2-digit byte length of ``data``. In transmitter mode the
+    Teensy passes such a command straight to the modem (it is not a ``$Y``/``$G``
+    /``$K`` command), so it is broadcast immediately rather than on the PPS
+    schedule -- handy for short control acknowledgements (e.g. ``OK``).
+    """
+    return f"{prefix}{len(data):02d}{data}"
+
+
+def parse_broadcast_payload(line, prefix="#B"):
+    """Parse a Succorfish broadcast frame into ``(modem_id, data)``.
+
+    Format: ``#B<modem_id(3)><num_chars(2)><data>``. Unlike ``parse_broadcast``
+    (which assumes ``data`` is ``lat,lon``), this returns the raw ``data``
+    string so the caller can decide whether it is GPS coordinates or a
+    telemetry frame (``data[0] == 'T'``).
+
+    Returns ``None`` if the line is not a parseable broadcast.
+    """
+    if not line.startswith(prefix):
+        return None
+    if len(line) < 7:
+        return None
+    modem_id = line[2:5]
+    try:
+        num_chars = int(line[5:7])
+    except ValueError:
+        return None
+    data = line[7:7 + num_chars]
+    if len(data) != num_chars:
+        return None
+    return modem_id, data
+
+
 def parse_owtt_delta(line, prefix="#I"):
     """Return the raw OWTT delta (microseconds) from a Teensy report line.
 

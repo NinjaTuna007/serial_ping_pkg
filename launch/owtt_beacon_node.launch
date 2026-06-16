@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Serial link to the Teensy 4.1 (transmitter) -->
+    <arg name="serial_port" default="/dev/ttyACM0" description="Serial port to the Teensy"/>
+    <arg name="serial_port_fallback" default="/dev/ttyACM1" description="Fallback serial port"/>
+    <arg name="serial_baudrate" default="115200" description="Serial baudrate (Teensy link)"/>
+
+    <!-- Teensy transmitter config -->
+    <arg name="own_modem_id" default="101" description="Beacon's own modem address (for $Y)"/>
+    <arg name="listen_for_modem_id" default="000" description="Modem id to wait for; 000 = go first"/>
+    <arg name="broadcast_interval_s" default="1" description="Broadcast cadence as a PPS multiple (1..4)"/>
+    <arg name="mode" default="transmitter" description="transmitter | wire"/>
+    <arg name="command_terminator" default="&#13;&#10;" description="Terminator appended to Teensy commands"/>
+
+    <!-- Beacon telemetry -->
+    <arg name="beacon_name" default="lolo" description="Beacon vehicle name (telemetry source namespace)"/>
+    <arg name="telemetry_fields" default="['bt']" description="Subset of position/depth/svs/speed/bt; default bt only"/>
+    <arg name="latlon_topic" default="" description="Override beacon position topic"/>
+    <arg name="depth_topic" default="" description="Override beacon depth topic (Float32, m +down)"/>
+    <arg name="speed_topic" default="" description="Override beacon speed topic"/>
+    <arg name="svs_topic" default="/lolo/sensors/svs" description="Beacon sound-velocity sensor topic"/>
+    <arg name="svs_msg_type" default="svs_interfaces/msg/SVS" description="SVS message type (pkg/msg/Type)"/>
+    <arg name="svs_field" default="svs" description="Field on the SVS message holding sound velocity"/>
+    <arg name="bt_topic" default="" description="Override beacon bt topic"/>
+    <arg name="bt_json_field" default="tip" description="Field pulled from the bt JSON"/>
+    <arg name="position_precision" default="6" description="Decimal places for lat/lon in the payload"/>
+    <arg name="max_bt_len" default="32" description="Cap on bt text length (acoustic bandwidth)"/>
+    <arg name="send_period_s" default="1.0" description="How often telemetry is pushed to the Teensy"/>
+    <arg name="position_seed_count" default="0" description="Include own GPS in the first N broadcasts then drop it (0=off)"/>
+
+    <!-- Broadcast START/STOP command channel -->
+    <arg name="autostart" default="false" description="Start broadcasting immediately (skip waiting for START)"/>
+    <arg name="commander_modem_ids" default="[]" description="Modem ids allowed to command START/STOP; empty = anyone"/>
+    <arg name="start_keyword" default="START" description="Broadcast keyword that starts telemetry"/>
+    <arg name="stop_keyword" default="STOP" description="Broadcast keyword that stops telemetry"/>
+    <arg name="ack_message" default="OK" description="Broadcast ack sent on an accepted START/STOP"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="owtt_beacon_node"
+          name="owtt_beacon_node"
+          output="screen">
+        <param name="serial.port" type="str" value="$(var serial_port)"/>
+        <param name="serial.port_fallback" type="str" value="$(var serial_port_fallback)"/>
+        <param name="serial.baudrate" value="$(var serial_baudrate)"/>
+        <param name="teensy.own_modem_id" type="str" value="$(var own_modem_id)"/>
+        <param name="teensy.listen_for_modem_id" type="str" value="$(var listen_for_modem_id)"/>
+        <param name="teensy.broadcast_interval_s" value="$(var broadcast_interval_s)"/>
+        <param name="teensy.mode" type="str" value="$(var mode)"/>
+        <param name="teensy.command_terminator" type="str" value="$(var command_terminator)"/>
+        <param name="beacon.name" type="str" value="$(var beacon_name)"/>
+        <param name="beacon.telemetry_fields" value="$(var telemetry_fields)"/>
+        <param name="beacon.latlon_topic" type="str" value="$(var latlon_topic)"/>
+        <param name="beacon.depth_topic" type="str" value="$(var depth_topic)"/>
+        <param name="beacon.speed_topic" type="str" value="$(var speed_topic)"/>
+        <param name="owtt.sound_velocity_topic" type="str" value="$(var svs_topic)"/>
+        <param name="owtt.sound_velocity_msg_type" type="str" value="$(var svs_msg_type)"/>
+        <param name="owtt.sound_velocity_field" type="str" value="$(var svs_field)"/>
+        <param name="beacon.bt_topic" type="str" value="$(var bt_topic)"/>
+        <param name="beacon.bt_json_field" type="str" value="$(var bt_json_field)"/>
+        <param name="beacon.position_precision" value="$(var position_precision)"/>
+        <param name="beacon.max_bt_len" value="$(var max_bt_len)"/>
+        <param name="beacon.send_period_s" value="$(var send_period_s)"/>
+        <param name="beacon.position_seed_count" value="$(var position_seed_count)"/>
+        <param name="beacon.autostart" value="$(var autostart)"/>
+        <param name="beacon.commander_modem_ids" value="$(var commander_modem_ids)"/>
+        <param name="beacon.start_keyword" type="str" value="$(var start_keyword)"/>
+        <param name="beacon.stop_keyword" type="str" value="$(var stop_keyword)"/>
+        <param name="beacon.ack_message" type="str" value="$(var ack_message)"/>
+    </node>
+</launch>

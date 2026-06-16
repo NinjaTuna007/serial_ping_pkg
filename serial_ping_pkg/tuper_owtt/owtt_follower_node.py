@@ -30,6 +30,13 @@ from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
 
 
 class OwttFollowerNode(WireSafeSerialNode):
+    # A leader whose decoded GPS repeats byte-for-byte this many times in a row
+    # is treated as frozen/stale (e.g. its bringup died and the Teensy keeps
+    # re-broadcasting the last stored fix). We then drop BOTH its position and
+    # range until it moves again, because a frozen position fused with a live,
+    # changing range diverges downstream filters.
+    FROZEN_REPEAT_LIMIT = 3
+
     def __init__(self):
         super().__init__('owtt_follower_node')
 
@@ -124,6 +131,11 @@ class OwttFollowerNode(WireSafeSerialNode):
                 'name': name,
                 'pos_pub': self.create_publisher(self.LeaderMsgType, pos_topic, 10),
                 'dist_pub': self.create_publisher(Float32, dist_topic, 10),
+                # Frozen-position detection state.
+                'last_pos': None,
+                'identical_count': 0,
+                'stale': False,
+                'stale_warned': False,
             }
             self.get_logger().info(f"Leader {name}: modem {modem_id} -> {pos_topic}, {dist_topic}")
 
@@ -206,6 +218,33 @@ class OwttFollowerNode(WireSafeSerialNode):
         if robot is None:
             self.get_logger().warn(f"Broadcast from unknown modem_id {modem_id}, ignoring.")
             return
+
+        # Frozen-position guard: count byte-for-byte repeats of this leader's GPS.
+        pos = (lat, lon)
+        if pos == robot['last_pos']:
+            robot['identical_count'] += 1
+        else:
+            if robot['stale']:
+                self.get_logger().info(
+                    f"[{robot['name']}] position updating again; resuming position + range.")
+            robot['identical_count'] = 1
+            robot['stale'] = False
+            robot['stale_warned'] = False
+        robot['last_pos'] = pos
+
+        if robot['identical_count'] >= self.FROZEN_REPEAT_LIMIT:
+            robot['stale'] = True
+
+        if robot['stale']:
+            if not robot['stale_warned']:
+                self.get_logger().warn(
+                    f"[{robot['name']}] GPS position frozen (identical for "
+                    f"{robot['identical_count']} broadcasts: lat={lat}, lon={lon}); "
+                    f"suppressing position AND range until it changes "
+                    f"(leader bringup / GPS feed likely died).")
+                robot['stale_warned'] = True
+            return
+
         msg = self.LeaderMsgType()
         msg.latitude = lat
         msg.longitude = lon
@@ -221,6 +260,10 @@ class OwttFollowerNode(WireSafeSerialNode):
         if robot is None:
             self.get_logger().warn(
                 f"OWTT delta for unknown modem_id {self.pending_modem_id}, ignoring.")
+            return
+        if robot['stale']:
+            self.get_logger().debug(
+                f"[{robot['name']}] range suppressed: leader position is frozen/stale.")
             return
         rng = ti.delta_to_range_m(delta_us, self.offset_us, self.sound_velocity)
         msg = Float32()
