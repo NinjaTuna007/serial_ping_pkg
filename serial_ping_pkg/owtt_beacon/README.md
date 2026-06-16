@@ -64,9 +64,11 @@ payload). The beacon enforces this via `max_onair_bytes`: if the encoded payload
 would overflow, it trims the free-text `bt` first (truncate → drop), then drops
 `speed`/`depth`/`svs`, always preserving `position`; a throttled warning tells
 you when it trims. To save bytes the `bt` tip is reduced to just the action-client
-name (`bt_name_only`, dropping `(Status.RUNNING)`) with the `A_` prefix stripped
-(`bt_strip_prefix`), e.g. `A_Chilling (Status.RUNNING)` → `Chilling`. The
-**default field set is `bt` only**.
+name (`bt_name_only`, dropping `(Status.RUNNING)`), reduced to the last path
+segment of the topic-like action name (`bt_basename`, `/lolo/move_to` →
+`move_to`), with the `A_` prefix stripped (`bt_strip_prefix`), e.g.
+`A_Chilling (Status.RUNNING)` → `Chilling`. The **default field set is `bt`
+only**.
 
 > Firmware note: `$K` is the host→Teensy command prefix (it would collide with
 > the modem's own `$T`), while `TEL:` is the on-air payload marker the receivers
@@ -229,6 +231,7 @@ overridable as a launch argument.
 | `svs_topic` / `svs_msg_type` / `svs_field`       | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | sound-velocity source                                       |
 | `bt_topic` / `bt_json_field`                     | derived / `tip`                                        | bt source + JSON field                                      |
 | `bt_name_only`                                   | `true`                                                 | keep only the action-client name, drop `(Status.RUNNING)`   |
+| `bt_basename`                                    | `true`                                                 | keep only the last path segment (`/lolo/move_to`→`move_to`) |
 | `bt_strip_prefix`                                | `A_`                                                   | strip this leading prefix from the bt name (`A_Chilling`→`Chilling`) |
 | `position_precision`                             | `6`                                                    | lat/lon decimals in payload                                 |
 | `max_bt_len`                                     | `32`                                                   | bt text cap (acoustic bandwidth)                            |

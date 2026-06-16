@@ -88,6 +88,9 @@ class BeaconNode(WireSafeSerialNode):
         # Keep only the action-client name from the bt tip, dropping the trailing
         # status, e.g. "A_Chilling (Status.RUNNING)" -> "A_Chilling" (saves bytes).
         self.declare_parameter('beacon.bt_name_only', beacon_cfg.get('bt_name_only', True))
+        # The action name is a ROS-topic-like path; keep only the segment after
+        # the last '/', e.g. "/lolo/move_to" -> "move_to" (the prefix is the robot).
+        self.declare_parameter('beacon.bt_basename', beacon_cfg.get('bt_basename', True))
         # Strip this leading prefix from the bt name, e.g. "A_Chilling" ->
         # "Chilling" (the "A_" carries no info). Empty = keep as-is.
         self.declare_parameter('beacon.bt_strip_prefix', beacon_cfg.get('bt_strip_prefix', 'A_'))
@@ -133,6 +136,7 @@ class BeaconNode(WireSafeSerialNode):
         self.bt_topic = self.get_parameter('beacon.bt_topic').get_parameter_value().string_value
         self.bt_json_field = self.get_parameter('beacon.bt_json_field').get_parameter_value().string_value
         self.bt_name_only = self.get_parameter('beacon.bt_name_only').get_parameter_value().bool_value
+        self.bt_basename = self.get_parameter('beacon.bt_basename').get_parameter_value().bool_value
         self.bt_strip_prefix = self.get_parameter('beacon.bt_strip_prefix').get_parameter_value().string_value
         self.position_precision = self.get_parameter('beacon.position_precision').get_parameter_value().integer_value
         self.max_bt_len = self.get_parameter('beacon.max_bt_len').get_parameter_value().integer_value
@@ -276,6 +280,10 @@ class BeaconNode(WireSafeSerialNode):
             # Keep only the action-client name before the status parenthetical,
             # e.g. "A_Chilling (Status.RUNNING)" -> "A_Chilling".
             tip = tip.split(' (')[0].strip()
+        if self.bt_basename:
+            # The action name is a ROS-topic-like path; keep the last segment,
+            # e.g. "/lolo/move_to" -> "move_to".
+            tip = tip.rsplit('/', 1)[-1]
         if self.bt_strip_prefix and tip.startswith(self.bt_strip_prefix):
             # Drop the useless leading prefix, e.g. "A_Chilling" -> "Chilling".
             tip = tip[len(self.bt_strip_prefix):]

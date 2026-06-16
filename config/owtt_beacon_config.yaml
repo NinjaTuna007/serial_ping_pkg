@@ -59,6 +59,7 @@ beacon:
   bt_topic: ""                  # default /<name>/waraps/sensor/bt (String JSON)
   bt_json_field: "tip"          # field pulled out of the bt JSON
   bt_name_only: true            # keep only the action-client name, drop "(Status.RUNNING)"
+  bt_basename: true             # keep only the last path segment ("/lolo/move_to" -> "move_to")
   bt_strip_prefix: "A_"         # strip this leading prefix from the bt name ("A_Chilling" -> "Chilling")
   position_precision: 6         # decimal places for lat/lon in the payload
   max_bt_len: 32                # cap bt text length (acoustic bandwidth)

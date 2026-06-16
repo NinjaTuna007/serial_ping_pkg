@@ -24,6 +24,7 @@
     <arg name="bt_topic" default="" description="Override beacon bt topic"/>
     <arg name="bt_json_field" default="tip" description="Field pulled from the bt JSON"/>
     <arg name="bt_name_only" default="true" description="Keep only the action-client name, drop the status"/>
+    <arg name="bt_basename" default="true" description="Keep only the last path segment of the bt name"/>
     <arg name="bt_strip_prefix" default="A_" description="Strip this leading prefix from the bt name"/>
     <arg name="position_precision" default="6" description="Decimal places for lat/lon in the payload"/>
     <arg name="max_bt_len" default="32" description="Cap on bt text length (acoustic bandwidth)"/>
@@ -61,6 +62,7 @@
         <param name="beacon.bt_topic" type="str" value="$(var bt_topic)"/>
         <param name="beacon.bt_json_field" type="str" value="$(var bt_json_field)"/>
         <param name="beacon.bt_name_only" value="$(var bt_name_only)"/>
+        <param name="beacon.bt_basename" value="$(var bt_basename)"/>
         <param name="beacon.bt_strip_prefix" type="str" value="$(var bt_strip_prefix)"/>
         <param name="beacon.position_precision" value="$(var position_precision)"/>
         <param name="beacon.max_bt_len" value="$(var max_bt_len)"/>
