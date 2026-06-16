@@ -146,7 +146,7 @@ Services (call from Foxglove / CLI):
 
 Reports are JSON strings, mirroring the smarc2 `str_json_mqtt_bridge`
 convention. Default broker is the smarc/WARA-PS broker `**20.240.40.232:1884`**
-(use `localhost:1889` for a local mosquitto). Topics live under the `**tuper**`
+(use `localhost:1889` for a local mosquitto). Topics live under the `**tuper`**
 context in an `**owtt_beacon**` subcontext:
 
 ```
@@ -185,13 +185,13 @@ ros2 launch serial_ping_pkg owtt_beacon_node.launch \
 # Surface unit 1 — the designated COMMANDER (only one unit gets commander:=true)
 ros2 launch serial_ping_pkg owtt_surface_unit_node.launch \
     serial_port:=/dev/succorfish unit_name:=floatsam_usv_1 own_modem_id:=067 \
-    beacon_name:=lolo beacon_modem_id:=101 commander:=true \
+    beacon_name:=lolo beacon_modem_id:=007 commander:=true \
     mqtt_host:=20.240.40.232 mqtt_port:=1884
 
 # Surface unit 2 — a listener (commander defaults to false)
 ros2 launch serial_ping_pkg owtt_surface_unit_node.launch \
     serial_port:=/dev/succorfish unit_name:=floatsam_usv_2 own_modem_id:=069 \
-    beacon_name:=lolo beacon_modem_id:=101 \
+    beacon_name:=lolo beacon_modem_id:=007 \
     mqtt_host:=20.240.40.232 mqtt_port:=1884
 
 # Inference (laptop) — hosts the /start /stop services
@@ -216,7 +216,7 @@ overridable as a launch argument.
 | `own_modem_id`                                   | `101`                                                  | beacon's own modem address (`$Y`)                           |
 | `listen_for_modem_id`                            | `000`                                                  | modem id to wait for before TX; `000` = go first            |
 | `broadcast_interval_s`                           | `1`                                                    | Teensy on-air cadence as a PPS multiple (1..4)              |
-| `mode`                                           | `transmitter`                                          | `transmitter` | `wire`                                      |
+| `mode`                                           | `transmitter`                                          | `transmitter`                                               |
 | `beacon_name`                                    | `lolo`                                                 | telemetry-source namespace                                  |
 | `telemetry_fields`                               | `['bt']`                                               | subset of `position`/`depth`/`svs`/`speed`/`bt`             |
 | `latlon_topic` / `depth_topic` / `speed_topic`   | derived                                                | override telemetry source topics                            |
@@ -244,7 +244,7 @@ overridable as a launch argument.
 | `serial_port` / `serial_port_fallback`           | `/dev/ttyACM0` / `/dev/ttyACM1`                        | Teensy serial port (+ fallback)                                    |
 | `serial_baudrate`                                | `115200`                                               | Teensy link baud                                                   |
 | `own_modem_id`                                   | `067`                                                  | this unit's own modem address (`$Y`)                               |
-| `mode`                                           | `receiver`                                             | `receiver` | `wire`                                                |
+| `mode`                                           | `receiver`                                             | `receiver`                                                         |
 | `owtt_delta_prefix`                              | `#I`                                                   | Teensy OWTT delta line prefix                                      |
 | `owtt_offset_us`                                 | `771600.0`                                             | constant offset subtracted from delta (µs)                         |
 | `default_sound_velocity`                         | `1500.0`                                               | fallback c if no beacon/local SVS                                  |
@@ -309,11 +309,11 @@ Lost commands/acks simply get re-sent within `command_timeout_s`.
 - **De-duped.** Each command carries a `request_id`; units ignore a request they've
 already acked, and the service matches the ack by `request_id`.
 - **Serialized.** A second `/start` while one is in flight returns `success=False`
-  ("already in progress") rather than racing.
+("already in progress") rather than racing.
 - **Fresh start.** A successful `/start` **re-initialises the filter**: the
-  two-hypothesis tracker, last published fix, and all buffered range reports are
-  cleared, so each run begins estimation from scratch (no stale pre-START data).
-  `/stop` leaves the filter state untouched.
+two-hypothesis tracker, last published fix, and all buffered range reports are
+cleared, so each run begins estimation from scratch (no stale pre-START data).
+`/stop` leaves the filter state untouched.
 
 Returns `std_srvs/Trigger`: `success=True` with the acking unit on confirmation,
 or `success=False` with a timeout message after `command_timeout_s`.
