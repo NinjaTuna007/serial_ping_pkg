@@ -30,6 +30,8 @@ teensy:
 owtt:
   delta_prefix: "#I"
   offset_us: 771600.0           # calibrated (lolo <-> floatsam, Askö 2026)
+  min_range_m: 0.0              # drop ranges below this (negatives = bad offset / unsynced clocks)
+  max_range_m: 0.0              # drop ranges above this (0 = no upper cap)
   default_sound_velocity: 1500.0
   sound_velocity_topic: "/lolo/sensors/svs"
   sound_velocity_msg_type: "svs_interfaces/msg/SVS"

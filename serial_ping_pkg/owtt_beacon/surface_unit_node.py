@@ -55,6 +55,11 @@ class SurfaceUnitNode(WireSafeSerialNode):
         # --- OWTT range conversion ---
         self.declare_parameter('owtt.delta_prefix', owtt_cfg.get('delta_prefix', '#I'))
         self.declare_parameter('owtt.offset_us', owtt_cfg.get('offset_us', 771600.0))
+        # Sanity band on the converted range. Anything below min (incl. negatives
+        # from a too-large offset / unsynced clocks) or above max (0 = no cap) is
+        # dropped before it reaches MQTT / triangulation.
+        self.declare_parameter('owtt.min_range_m', owtt_cfg.get('min_range_m', 0.0))
+        self.declare_parameter('owtt.max_range_m', owtt_cfg.get('max_range_m', 0.0))
         self.declare_parameter('owtt.default_sound_velocity', owtt_cfg.get('default_sound_velocity', 1500.0))
         self.declare_parameter('owtt.sound_velocity_topic', owtt_cfg.get('sound_velocity_topic', '/lolo/sensors/svs'))
         self.declare_parameter('owtt.sound_velocity_msg_type', owtt_cfg.get('sound_velocity_msg_type', 'svs_interfaces/msg/SVS'))
@@ -96,6 +101,8 @@ class SurfaceUnitNode(WireSafeSerialNode):
         self.baudrate = self.get_parameter('serial.baudrate').get_parameter_value().integer_value
         self.delta_prefix = self.get_parameter('owtt.delta_prefix').get_parameter_value().string_value
         self.offset_us = self.get_parameter('owtt.offset_us').get_parameter_value().double_value
+        self.min_range_m = self.get_parameter('owtt.min_range_m').get_parameter_value().double_value
+        self.max_range_m = self.get_parameter('owtt.max_range_m').get_parameter_value().double_value
         self.default_sound_velocity = self.get_parameter('owtt.default_sound_velocity').get_parameter_value().double_value
         self.sound_velocity_topic = self.get_parameter('owtt.sound_velocity_topic').get_parameter_value().string_value
         self.sound_velocity_msg_type = self.get_parameter('owtt.sound_velocity_msg_type').get_parameter_value().string_value
@@ -349,6 +356,23 @@ class SurfaceUnitNode(WireSafeSerialNode):
             except (TypeError, ValueError):
                 pass
         rng = ti.delta_to_range_m(delta_us, self.offset_us, c)
+
+        # Sanity guard: an OWTT range can't be negative, and is usually bounded.
+        if rng < self.min_range_m or (self.max_range_m > 0.0 and rng > self.max_range_m):
+            if rng < 0.0:
+                why = (f"delta_us ({delta_us}) < offset_us ({self.offset_us:.0f}): "
+                       "owtt_offset_us is too large for this link (mis-calibrated) "
+                       "or the modems' clocks aren't PPS-synchronised")
+            elif rng < self.min_range_m:
+                why = f"below owtt.min_range_m ({self.min_range_m:.1f} m)"
+            else:
+                why = f"above owtt.max_range_m ({self.max_range_m:.1f} m)"
+            self.get_logger().warn(
+                f"Dropping unphysical range {rng:.1f} m ({why}); "
+                f"delta={delta_us} us, offset={self.offset_us:.0f} us, c={c:.1f} m/s.",
+                throttle_duration_sec=5.0)
+            self.pending = None
+            return
 
         range_msg = Float32()
         range_msg.data = float(rng)

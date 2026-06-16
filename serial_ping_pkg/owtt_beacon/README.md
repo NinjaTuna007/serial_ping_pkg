@@ -196,7 +196,7 @@ ros2 launch serial_ping_pkg owtt_surface_unit_node.launch \
 
 # Inference (laptop) — hosts the /start /stop services
 ros2 launch serial_ping_pkg owtt_inference_node.launch \
-    beacon_name:=lolo mqtt_host:=20.240.40.232 mqtt_port:=1884
+    beacon_name:=lolo mqtt_host:=20.240.40.232 mqtt_port:=1884 command_repeat_s:=4.0
 
 # Start / stop the beacon broadcasting (e.g. from a Foxglove service-call panel)
 ros2 service call /owtt_beacon/lolo/start std_srvs/srv/Trigger
@@ -247,6 +247,7 @@ overridable as a launch argument.
 | `mode`                                           | `receiver`                                             | `receiver`                                                         |
 | `owtt_delta_prefix`                              | `#I`                                                   | Teensy OWTT delta line prefix                                      |
 | `owtt_offset_us`                                 | `771600.0`                                             | constant offset subtracted from delta (µs)                         |
+| `min_range_m` / `max_range_m`                    | `0.0` / `0.0`                                          | drop ranges outside this band (neg = bad offset/sync; `max 0` = no cap) |
 | `default_sound_velocity`                         | `1500.0`                                               | fallback c if no beacon/local SVS                                  |
 | `sound_velocity_topic` / `_msg_type` / `_field`  | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | local SVS fallback source                                          |
 | `unit_name`                                      | `surface_unit`                                         | this unit's name (own-GPS namespace + report id)                   |
