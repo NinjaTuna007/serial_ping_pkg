@@ -139,9 +139,10 @@ transmits the acoustic `START`/`STOP` keyword. Whichever unit hears the beacon's
 Subscribes MQTT `<topic_prefix>/<beacon>/range/+` (range reports) and
 `<topic_prefix>/<beacon>/cmd_ack` (command acks). Publishes:
 
-- `/owtt_beacon/<beacon>/estimate` (`sensor_msgs/NavSatFix`) — triangulated fix
+- `/owtt_beacon/<beacon>/estimate` (`sensor_msgs/NavSatFix`) — triangulated fix (or single-receiver EKF fix)
 - `/owtt_beacon/<beacon>/estimate_alt` (`NavSatFix`) — mirror fix (2-receiver case, if `publish_both`)
 - `/owtt_beacon/<beacon>/reported` (`NavSatFix`) — beacon's self-reported pos (if telemetry carries position)
+- `/owtt_beacon/<beacon>/receiver/<unit>` (`NavSatFix`) — each surface receiver's own GPS, read from MQTT and re-published (one per reporting unit, independent of whether a usable range exists)
 - `/owtt_beacon/<beacon>/telemetry` (`std_msgs/String` JSON)
 - MQTT `→ <topic_prefix>/<beacon>/cmd` (START/STOP requests)
 
@@ -186,9 +187,10 @@ The subscribe `+` wildcard means the inference node automatically picks up
 ros2 launch serial_ping_pkg owtt_beacon_node.launch \
     serial_port:=/dev/ttyACM0 beacon_name:=lolo own_modem_id:=007 \
     telemetry_fields:="['position','depth','svs','speed','bt']" \
-    position_seed_count:=10 \
-    send_period_s:=2.0 \
+    position_seed_count:=30 \
+    send_period_s:=0.5 broadcast_interval_s:=4\
     commander_modem_ids:="[]"
+
 
 # Surface unit 1 — the designated COMMANDER (only one unit gets commander:=true)
 ros2 launch serial_ping_pkg owtt_surface_unit_node.launch \
@@ -217,30 +219,30 @@ overridable as a launch argument.
 ### `owtt_beacon_node.launch` arguments
 
 
-| arg                                              | default                                                | meaning                                                     |
-| ------------------------------------------------ | ------------------------------------------------------ | ----------------------------------------------------------- |
-| `serial_port` / `serial_port_fallback`           | `/dev/ttyACM0` / `/dev/ttyACM1`                        | Teensy serial port (+ fallback)                             |
-| `serial_baudrate`                                | `115200`                                               | Teensy link baud                                            |
-| `own_modem_id`                                   | `101`                                                  | beacon's own modem address (`$Y`)                           |
-| `listen_for_modem_id`                            | `000`                                                  | modem id to wait for before TX; `000` = go first            |
-| `broadcast_interval_s`                           | `1`                                                    | Teensy on-air cadence as a PPS multiple (1..4)              |
-| `mode`                                           | `transmitter`                                          | `transmitter`                                               |
-| `beacon_name`                                    | `lolo`                                                 | telemetry-source namespace                                  |
-| `telemetry_fields`                               | `['bt']`                                               | subset of `position`/`depth`/`svs`/`speed`/`bt`             |
-| `latlon_topic` / `depth_topic` / `speed_topic`   | derived                                                | override telemetry source topics                            |
-| `svs_topic` / `svs_msg_type` / `svs_field`       | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | sound-velocity source                                       |
-| `bt_topic` / `bt_json_field`                     | derived / `tip`                                        | bt source + JSON field                                      |
-| `bt_name_only`                                   | `true`                                                 | keep only the action-client name, drop `(Status.RUNNING)`   |
-| `bt_basename`                                    | `true`                                                 | keep only the last path segment (`/lolo/move_to`→`move_to`) |
+| arg                                              | default                                                | meaning                                                              |
+| ------------------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------- |
+| `serial_port` / `serial_port_fallback`           | `/dev/ttyACM0` / `/dev/ttyACM1`                        | Teensy serial port (+ fallback)                                      |
+| `serial_baudrate`                                | `115200`                                               | Teensy link baud                                                     |
+| `own_modem_id`                                   | `101`                                                  | beacon's own modem address (`$Y`)                                    |
+| `listen_for_modem_id`                            | `000`                                                  | modem id to wait for before TX; `000` = go first                     |
+| `broadcast_interval_s`                           | `1`                                                    | Teensy on-air cadence as a PPS multiple (1..4)                       |
+| `mode`                                           | `transmitter`                                          | `transmitter`                                                        |
+| `beacon_name`                                    | `lolo`                                                 | telemetry-source namespace                                           |
+| `telemetry_fields`                               | `['bt']`                                               | subset of `position`/`depth`/`svs`/`speed`/`bt`                      |
+| `latlon_topic` / `depth_topic` / `speed_topic`   | derived                                                | override telemetry source topics                                     |
+| `svs_topic` / `svs_msg_type` / `svs_field`       | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | sound-velocity source                                                |
+| `bt_topic` / `bt_json_field`                     | derived / `tip`                                        | bt source + JSON field                                               |
+| `bt_name_only`                                   | `true`                                                 | keep only the action-client name, drop `(Status.RUNNING)`            |
+| `bt_basename`                                    | `true`                                                 | keep only the last path segment (`/lolo/move_to`→`move_to`)          |
 | `bt_strip_prefix`                                | `A_`                                                   | strip this leading prefix from the bt name (`A_Chilling`→`Chilling`) |
-| `position_precision`                             | `6`                                                    | lat/lon decimals in payload                                 |
-| `max_bt_len`                                     | `32`                                                   | bt text cap (acoustic bandwidth)                            |
-| `max_onair_bytes`                                | `64`                                                   | modem packet cap; `TEL:`+payload auto-trimmed to fit        |
-| `send_period_s`                                  | `1.0`                                                  | **telemetry broadcast interval** (how often `$K` is pushed) |
-| `position_seed_count`                            | `0`                                                    | include GPS in first N broadcasts then drop it              |
-| `autostart`                                      | `false`                                                | begin broadcasting without waiting for `START`              |
-| `commander_modem_ids`                            | `[]`                                                   | modem ids allowed to command; `**[]` = anyone**             |
-| `start_keyword` / `stop_keyword` / `ack_message` | `START` / `STOP` / `OK`                                | command channel words                                       |
+| `position_precision`                             | `6`                                                    | lat/lon decimals in payload                                          |
+| `max_bt_len`                                     | `32`                                                   | bt text cap (acoustic bandwidth)                                     |
+| `max_onair_bytes`                                | `64`                                                   | modem packet cap; `TEL:`+payload auto-trimmed to fit                 |
+| `send_period_s`                                  | `1.0`                                                  | **telemetry broadcast interval** (how often `$K` is pushed)          |
+| `position_seed_count`                            | `0`                                                    | include GPS in first N broadcasts then drop it                       |
+| `autostart`                                      | `false`                                                | begin broadcasting without waiting for `START`                       |
+| `commander_modem_ids`                            | `[]`                                                   | modem ids allowed to command; `**[]` = anyone**                      |
+| `start_keyword` / `stop_keyword` / `ack_message` | `START` / `STOP` / `OK`                                | command channel words                                                |
 
 
 > The on-air cadence is `broadcast_interval_s` (PPS-locked, set on the Teensy);
@@ -347,12 +349,21 @@ or `success=False` with a timeout message after `command_timeout_s`.
 
 ## Testing without hardware
 
-`owtt_fake_mqtt` simulates the whole acoustic side: a beacon on a closed-loop
-(circular) trajectory and N fixed "buoy" surface units bobbing about their
-moorings. It publishes JSON range reports in the exact `surface_unit_node`
-schema to `<topic_prefix>/<beacon>/range/<unit>`, so you can exercise the
-inference node and your map view with no Teensy/modem. It loops until Ctrl+C, and
-the trajectory is periodic (each lap starts/ends at the same point).
+`owtt_fake_mqtt` simulates the whole acoustic side: a beacon looping a **simple
+circle** (`--traj-radius`) and N "buoy" surface units spread on a wide **East-West
+baseline ~4x the circle radius** (`--buoy-baseline`) just north of lolo's start,
+each **patrolling back and forth** along perpendicular tracks (`--buoy-patrol`,
+`--buoy-patrol-period`). The wide baseline keeps the triangulation geometry
+well-conditioned. The circle is centred on a configurable offset from the
+scenario centre (default **90 m west and 150 m south**). Its telemetry mirrors the beacon's real on-air sentence
+(`P;D;C;S;B` = position, depth, svs, speed, bt): depth/svs/speed/bt every report,
+and **position only while seeding** — the first `--seed-seconds` (default 30 s)
+after each START, then position is dropped (as the real beacon does to save
+acoustic bytes).
+It publishes JSON range reports in the exact `surface_unit_node` schema to
+`<topic_prefix>/<beacon>/range/<unit>`, so you can exercise the inference node
+and your map view with no Teensy/modem. It loops until Ctrl+C, and the trajectory
+is periodic (each lap starts/ends at the same point).
 
 ```bash
 # Terminal 1 — fake data (defaults: smarc broker, lolo, 2 buoys, ~1.5 m/s).
@@ -389,17 +400,23 @@ commander + units relay the `OK` (use when testing real surface units against a
 fake range stream).
 - `--ignore-commands` — ignore the command channel entirely (implies `--autostart`).
 
-Other useful flags: `--num-units 3` (test multilateration / unique fix),
-`--depth 12` (reports slant range + telemetry depth → exercises the
-slant→horizontal path), `--seed-count 5` (beacon broadcasts its true GPS for the
-first 5 reports → exercises branch-locking), `--mqtt-host localhost --mqtt-port 1889` (local mosquitto), `--loop-period`/`--traj-radius` (set the beacon speed).
+Other useful flags: `--num-units 1` (test the **single-receiver range-only EKF**),
+`--num-units 3` (test multilateration / unique fix), `--depth 12` (reports slant
+range + telemetry depth → exercises the slant→horizontal path), `--seed-count 5`
+(beacon broadcasts its true GPS for the first 5 reports → exercises branch-locking
+/ EKF bootstrap), `--mqtt-host localhost --mqtt-port 1889` (local mosquitto),
+`--loop-period`/`--traj-radius` (circle period/size → beacon speed),
+`--traj-offset-east`/`--traj-offset-north` (move the circle centre),
+`--buoy-baseline`/`--buoy-patrol`/`--buoy-north-gap` (buoy separation / patrol size / distance north of lolo).
 Run `ros2 run serial_ping_pkg owtt_fake_mqtt --help` for the full list.
 
 ## Visualization
 
 The inference node publishes plain `sensor_msgs/NavSatFix`, so the default path
 is **Foxglove**: open the *Map* panel and add the `estimate`, `estimate_alt`,
-`reported`, and the surface units' `…/smarc/latlon` topics. Foxglove's Map panel
+`reported`, and the per-receiver `…/receiver/<unit>` topics (the node re-publishes
+each surface unit's own GPS from MQTT, so the receivers and the beacon estimate
+share one map without any extra ROS plumbing). Foxglove's Map panel
 renders over **OpenStreetMap** tiles by default and also supports custom/Mapbox
 tile sources (Google's tile API needs a key + has usage terms, so OSM is the
 zero-setup choice). RViz `NavSatFix` (rviz_satellite) is an alternative.
@@ -421,6 +438,31 @@ is also published on `estimate_alt` so **both candidates show on the map**.
 - **3+ receivers:** it solves a least-squares **multilateration** over *all*
 fresh reports (Gauss-Newton, seeded by the disambiguated fix of the
 best-separated pair). The fix is unique — no mirror is published.
+- **1 receiver:** triangulation is impossible, but a single range still
+constrains the beacon to a circle. With `inference.single_receiver` (default on)
+the node falls back to a **range-only EKF** — see below.
+
+### Single receiver (range-only EKF)
+
+When only one unit reports, the node runs a constant-velocity **EKF** on state
+`[E, N, vE, vN]`: it predicts with the vehicle model (velocity capped at
+`inference.max_speed_mps`) and corrects with each measured (depth-corrected)
+range to the receiver's current position. It is bootstrapped from a **known
+initial position** — `inference.initial_lat`/`initial_lon` if set, else the
+beacon's reported GPS (telemetry seed), else the last multi-receiver fix — and
+while ≥2 units are available it is kept warm from the triangulated fix so the
+hand-off is seamless when units drop out. Tunables: `inference.range_std_m` (R),
+`inference.single_init_pos_std_m`/`single_init_vel_std_mps` (P₀),
+`inference.process_accel_std_mps2` (Q).
+
+> **Observability caveat:** range-only single-receiver tracking is only
+> well-observed when the beacon's *bearing* (as seen from the receiver) changes
+> appreciably — i.e. the receiver is reasonably close, the receiver moves, or the
+> beacon manoeuvres across the line of sight. The radial (range) direction is
+> always observed; the tangential one is not. A target far from a single fixed
+> buoy moving in a tight pattern is weakly observable and the cross-range estimate
+> can drift. It converges to sub-metre accuracy under good geometry and is best
+> treated as a graceful **degraded mode** between multi-receiver fixes.
 
 ### Slant vs. horizontal range (depth)
 
@@ -452,6 +494,17 @@ onto the branch nearest it (`inference.use_reported_position`, default on). This
 pairs with the beacon's `position_seed_count`: include the real GPS in the
 **first N broadcasts** (e.g. while surfaced, before diving) to seed the fix, then
 drop position to save acoustic bytes and let the converged tracker continue.
+
+### Smooth output (prediction between fixes)
+
+Ranges only arrive about once per second, so a fix published on each measurement
+would visibly *jump*. Instead the node hands the latest fix **and its velocity**
+(from the winning hypothesis, or the range-only EKF) to a fast publish timer that
+re-emits `estimate` every `inference.publish_period_s` (default 0.1 s), dead-
+reckoning the position forward along the velocity. The result glides smoothly and
+snaps to each new measurement; if reports stop for longer than the freshness
+window it stops extrapolating rather than flying off. The `estimate_alt` mirror
+is still published at the (slower) update rate.
 
 Reports are keyed by `surface_unit`, and only those within
 `inference.freshness_window_s` are used, so units can come and go. A good

@@ -35,10 +35,24 @@ Position seeding: if the beacon includes its own GPS in telemetry (e.g. for the
 first few broadcasts before it dives, to save acoustic bytes), the tracker uses
 that reported position to lock onto the correct branch immediately; once the
 beacon goes silent on position, the converged tracker carries on.
+
+Single receiver: triangulation needs >=2 receivers, but one receiver still
+constrains the beacon to a circle. When only one unit reports, we fall back to a
+range-only EKF (constant-velocity vehicle model) seeded from a known initial
+position (``inference.initial_lat/lon``, else the beacon's reported GPS, else the
+last multi-receiver fix). Each new range to the (possibly moving) receiver
+updates the filter, so the estimate keeps tracking on a single source. While
+multiple receivers are available the EKF is kept warm from the triangulated fix
+so the hand-off is seamless when units drop out.
+
+Receivers: the node also re-publishes each surface unit's own GPS (carried in
+its MQTT report) as a ``NavSatFix`` on ``.../receiver/<unit>`` so the receivers
+show up on the same map as the beacon estimate.
 """
 
 import json
 import math
+import re
 import threading
 import time
 import uuid
@@ -147,6 +161,9 @@ class InferenceNode(Node):
         self.declare_parameter('mqtt.topic_prefix', mqtt_cfg.get('topic_prefix', 'owtt_beacon'))
 
         self.declare_parameter('inference.update_period_s', inf_cfg.get('update_period_s', 1.0))
+        # How often to (re)publish the estimate. Faster than update_period_s so the
+        # fix glides via the motion model between range measurements (no jumps).
+        self.declare_parameter('inference.publish_period_s', inf_cfg.get('publish_period_s', 0.1))
         self.declare_parameter('inference.freshness_window_s', inf_cfg.get('freshness_window_s', 10.0))
         self.declare_parameter('inference.min_units', inf_cfg.get('min_units', 2))
         self.declare_parameter('inference.frame_id', inf_cfg.get('frame_id', 'map'))
@@ -165,6 +182,17 @@ class InferenceNode(Node):
         # Use the beacon's own reported GPS (telemetry 'position') to lock the
         # correct branch when it is available (e.g. seed broadcasts before diving).
         self.declare_parameter('inference.use_reported_position', inf_cfg.get('use_reported_position', True))
+        # Single-receiver range-only EKF: when only one unit reports, track the
+        # beacon from a known initial position + constant-velocity vehicle model.
+        self.declare_parameter('inference.single_receiver', inf_cfg.get('single_receiver', True))
+        # Known initial position to bootstrap the range-only filter (0,0 = use the
+        # beacon's reported GPS, else the last multi-receiver fix).
+        self.declare_parameter('inference.initial_lat', inf_cfg.get('initial_lat', 0.0))
+        self.declare_parameter('inference.initial_lon', inf_cfg.get('initial_lon', 0.0))
+        self.declare_parameter('inference.range_std_m', inf_cfg.get('range_std_m', 2.0))
+        self.declare_parameter('inference.single_init_pos_std_m', inf_cfg.get('single_init_pos_std_m', 50.0))
+        self.declare_parameter('inference.single_init_vel_std_mps', inf_cfg.get('single_init_vel_std_mps', 1.0))
+        self.declare_parameter('inference.process_accel_std_mps2', inf_cfg.get('process_accel_std_mps2', 0.3))
         # START/STOP command orchestration (services -> MQTT -> surface units).
         self.declare_parameter('inference.command_timeout_s', inf_cfg.get('command_timeout_s', 10.0))
         self.declare_parameter('inference.command_repeat_s', inf_cfg.get('command_repeat_s', 1.5))
@@ -177,6 +205,7 @@ class InferenceNode(Node):
         self.mqtt_password = self.get_parameter('mqtt.password').get_parameter_value().string_value
         self.mqtt_topic_prefix = self.get_parameter('mqtt.topic_prefix').get_parameter_value().string_value
         self.update_period_s = self.get_parameter('inference.update_period_s').get_parameter_value().double_value
+        self.publish_period_s = self.get_parameter('inference.publish_period_s').get_parameter_value().double_value
         self.freshness_window_s = self.get_parameter('inference.freshness_window_s').get_parameter_value().double_value
         self.min_units = self.get_parameter('inference.min_units').get_parameter_value().integer_value
         self.frame_id = self.get_parameter('inference.frame_id').get_parameter_value().string_value
@@ -186,6 +215,13 @@ class InferenceNode(Node):
         self.motion_model = self.get_parameter('inference.motion_model').get_parameter_value().bool_value
         self.max_speed_mps = self.get_parameter('inference.max_speed_mps').get_parameter_value().double_value
         self.use_reported_position = self.get_parameter('inference.use_reported_position').get_parameter_value().bool_value
+        self.single_receiver = self.get_parameter('inference.single_receiver').get_parameter_value().bool_value
+        self.initial_lat = self.get_parameter('inference.initial_lat').get_parameter_value().double_value
+        self.initial_lon = self.get_parameter('inference.initial_lon').get_parameter_value().double_value
+        self.range_std_m = self.get_parameter('inference.range_std_m').get_parameter_value().double_value
+        self.single_init_pos_std_m = self.get_parameter('inference.single_init_pos_std_m').get_parameter_value().double_value
+        self.single_init_vel_std_mps = self.get_parameter('inference.single_init_vel_std_mps').get_parameter_value().double_value
+        self.process_accel_std_mps2 = self.get_parameter('inference.process_accel_std_mps2').get_parameter_value().double_value
         self.command_timeout_s = self.get_parameter('inference.command_timeout_s').get_parameter_value().double_value
         self.command_repeat_s = self.get_parameter('inference.command_repeat_s').get_parameter_value().double_value
 
@@ -202,6 +238,22 @@ class InferenceNode(Node):
         self._speed_penalty_w = 4.0   # cost weight on exceeding max_speed
         self._seed_penalty = 1.0e4    # cost bump to branches far from a reported GPS
         self._merge_thresh_m = 3.0    # collapse hypotheses closer than this
+
+        # Single-receiver range-only EKF state: x = [E, N, vE, vN] about a fixed
+        # local origin. Kept warm from the multi-receiver fix for a seamless drop.
+        self._sr_state = None         # np.array([E, N, vE, vN]) or None
+        self._sr_cov = None           # 4x4 covariance
+        self._sr_origin = None        # (lat0, lon0) of the EKF local frame
+        self._sr_t = None             # last EKF update time
+
+        # NavSatFix publishers for each surface receiver's own GPS, created lazily.
+        self._receiver_pubs = {}      # unit_name -> publisher
+
+        # Smooth-output dead-reckoning target: (lat, lon, vE, vN, t). The fast
+        # publish timer glides this forward along the velocity between range
+        # updates, so the estimate moves continuously instead of jumping. Stored
+        # as one tuple so the timer thread reads it atomically (no torn reads).
+        self._smooth = None
 
         self.fix_pub = self.create_publisher(
             NavSatFix, f"/owtt_beacon/{self.beacon_name}/estimate", 10)
@@ -240,6 +292,11 @@ class InferenceNode(Node):
             self._on_stop_service, callback_group=self._srv_group)
 
         self.timer = self.create_timer(self.update_period_s, self.update)
+        # Fast publish timer: dead-reckons the latest fix along its velocity so the
+        # estimate streams smoothly. Reentrant so a blocking START/STOP service or
+        # the slower update() never stalls it.
+        self.smooth_timer = self.create_timer(
+            self.publish_period_s, self._publish_smooth, callback_group=self._srv_group)
         self.get_logger().info(
             f"OWTT inference node up: MQTT {self.mqtt_host}:{self.mqtt_port} "
             f"sub '{self.sub_topic}', publishing beacon '{self.beacon_name}' estimate. "
@@ -314,10 +371,16 @@ class InferenceNode(Node):
                 response.success = True
                 response.message = f"{command} acknowledged by '{pend['unit']}' (beacon OK)."
                 # A fresh START means a new run: drop all stale tracker state and
-                # buffered reports so the filter re-initialises from scratch.
+                # buffered reports so the filter re-initialises from scratch. A
+                # STOP halts estimation: clear state so the estimate stops being
+                # (dead-reckoned and) published immediately instead of coasting
+                # for the freshness window.
                 if command == 'START':
                     self._reset_filter()
                     response.message += " Filter re-initialised."
+                elif command == 'STOP':
+                    self._reset_filter()
+                    response.message += " Estimation halted."
             else:
                 response.success = False
                 response.message = (f"{command} timed out after {self.command_timeout_s:.0f}s "
@@ -334,7 +397,12 @@ class InferenceNode(Node):
             self._hyps = []
             self._prev_estimate = None
             self._reports.clear()
-        self.get_logger().info("Filter re-initialised (hypotheses, last fix, and reports cleared).")
+            self._sr_state = None
+            self._sr_cov = None
+            self._sr_origin = None
+            self._sr_t = None
+            self._smooth = None
+        self.get_logger().info("Filter re-initialised (hypotheses, last fix, EKF, and reports cleared).")
 
     def _publish_cmd(self, command, request_id):
         payload = json.dumps({
@@ -351,19 +419,32 @@ class InferenceNode(Node):
     def update(self):
         now = time.time()
         with self._lock:
-            fresh = [r for r in self._reports.values()
-                     if (now - r.get('recv_time', 0.0)) <= self.freshness_window_s
-                     and r.get('unit_lat') is not None
-                     and r.get('unit_lon') is not None
-                     and r.get('range_m') is not None]
+            # Reports with a known position (regardless of range): used for the
+            # receiver NavSatFix re-publish and the telemetry passthrough.
+            located = [r for r in self._reports.values()
+                       if (now - r.get('recv_time', 0.0)) <= self.freshness_window_s
+                       and r.get('unit_lat') is not None
+                       and r.get('unit_lon') is not None]
 
-        # Republish the most recent beacon telemetry / self-reported position.
-        self._publish_latest_telemetry(fresh)
+        # Always re-publish each surface receiver's own GPS (read from MQTT) as a
+        # NavSatFix, plus the latest beacon telemetry -- independent of whether a
+        # usable range exists, so the receivers always show on the map.
+        self._publish_receivers(located)
+        self._publish_latest_telemetry(located)
 
-        if len(fresh) < max(2, self.min_units):
-            self.get_logger().info(
-                f"Need >={max(2, self.min_units)} fresh surface-unit reports to "
-                f"triangulate; have {len(fresh)}.", throttle_duration_sec=5.0)
+        # Reports that also carry a usable range -> drive the localisation.
+        fresh = [r for r in located if r.get('range_m') is not None]
+
+        need = max(2, self.min_units)
+        if len(fresh) < need:
+            # Not enough for triangulation. With exactly one receiver we can still
+            # track via the range-only EKF (known initial pos + vehicle model).
+            if len(fresh) == 1 and self.single_receiver:
+                self._run_single_receiver(fresh[0], now)
+            else:
+                self.get_logger().info(
+                    f"Need >={need} fresh surface-unit reports to triangulate; "
+                    f"have {len(fresh)}.", throttle_duration_sec=5.0)
             return
 
         sols = self._triangulate(fresh)
@@ -374,7 +455,13 @@ class InferenceNode(Node):
         primary, mirror = self._estimate(sols, now, reported)
         lat, lon = primary
         self._prev_estimate = primary
-        self._publish_fix(self.fix_pub, lat, lon)
+        # Keep the range-only EKF aligned with the multi-receiver fix so a later
+        # drop to a single receiver continues smoothly from the right place.
+        self._seed_single_filter(primary, now)
+        # Hand the fix + its velocity to the smooth publisher (it streams the
+        # primary estimate); the mirror is published here at the update rate.
+        vE, vN = self._primary_velocity()
+        self._set_smooth_target(lat, lon, vE, vN, now)
 
         units = ', '.join(f"{r['surface_unit']}={r['range_m']:.1f}m" for r in fresh)
         if not (self.publish_both and len(sols) == 2):
@@ -449,6 +536,155 @@ class InferenceNode(Node):
             except (TypeError, ValueError):
                 pass
         return max(0.0, self.assumed_depth_m)
+
+    # ------------------------------------------------ single-receiver EKF
+
+    def _run_single_receiver(self, report, now):
+        """Track the beacon from a single receiver via the range-only EKF."""
+        result = self._single_filter_step(report, now)
+        if result is None:
+            return
+        lat, lon, vE, vN = result
+        self._prev_estimate = (lat, lon)
+        # Stream it through the smooth publisher (EKF velocity glides between fixes).
+        self._set_smooth_target(lat, lon, vE, vN, now)
+        self.get_logger().info(
+            f"Beacon '{self.beacon_name}' single-receiver estimate: lat={lat:.7f}, "
+            f"lon={lon:.7f} (range-only EKF from '{report.get('surface_unit')}'="
+            f"{float(report['range_m']):.1f}m).", throttle_duration_sec=2.0)
+
+    def _single_init_position(self, report):
+        """Known initial position to bootstrap the range-only filter, or None.
+
+        Priority: configured initial_lat/lon, else the beacon's reported GPS
+        (telemetry seed), else the last converged multi-receiver fix.
+        """
+        if self.initial_lat != 0.0 or self.initial_lon != 0.0:
+            return (self.initial_lat, self.initial_lon)
+        rep = self._reported_position([report])
+        if rep is not None:
+            return rep
+        return self._prev_estimate
+
+    def _single_filter_step(self, report, now):
+        """One predict/update of the range-only EKF; returns (lat, lon, vE, vN) or None.
+
+        State x = [E, N, vE, vN] in a fixed local ENU frame. Predict with a
+        constant-velocity model, then correct with the measured (depth-corrected)
+        range to the receiver's current position.
+        """
+        slant = float(report['range_m'])
+        rng = self._horizontal_range(slant, [report])
+        rlat, rlon = float(report['unit_lat']), float(report['unit_lon'])
+
+        if self._sr_state is None:
+            init = self._single_init_position(report)
+            if init is None:
+                self.get_logger().warn(
+                    "Single receiver only and no known initial position (set "
+                    "inference.initial_lat/lon, broadcast a seed position, or get one "
+                    "multi-receiver fix first); cannot start range-only filter.",
+                    throttle_duration_sec=5.0)
+                return None
+            self._sr_origin = init
+            self._sr_state = np.array([0.0, 0.0, 0.0, 0.0], dtype=float)
+            p = self.single_init_pos_std_m ** 2
+            v = self.single_init_vel_std_mps ** 2
+            self._sr_cov = np.diag([p, p, v, v]).astype(float)
+            self._sr_t = now
+            self.get_logger().info(
+                f"Range-only filter initialised at lat={init[0]:.7f}, lon={init[1]:.7f}.")
+
+        dt = min(self.freshness_window_s, max(1e-3, now - self._sr_t))
+
+        # Predict: constant-velocity model with white-noise acceleration Q.
+        F = np.array([[1.0, 0.0, dt, 0.0],
+                      [0.0, 1.0, 0.0, dt],
+                      [0.0, 0.0, 1.0, 0.0],
+                      [0.0, 0.0, 0.0, 1.0]])
+        x = F @ self._sr_state
+        q = self.process_accel_std_mps2 ** 2
+        dt2, dt3, dt4 = dt * dt, dt * dt * dt / 2.0, dt * dt * dt * dt / 4.0
+        Q = q * np.array([[dt4, 0.0, dt3, 0.0],
+                          [0.0, dt4, 0.0, dt3],
+                          [dt3, 0.0, dt2, 0.0],
+                          [0.0, dt3, 0.0, dt2]])
+        P = F @ self._sr_cov @ F.T + Q
+
+        # Update: range to the receiver (nonlinear; linearise about the prediction).
+        rE, rN = geodetic_to_enu(rlat, rlon, *self._sr_origin)
+        dx, dy = x[0] - rE, x[1] - rN
+        pred = max(1e-3, math.hypot(dx, dy))
+        H = np.array([dx / pred, dy / pred, 0.0, 0.0])
+        S = float(H @ P @ H) + self.range_std_m ** 2
+        K = (P @ H) / S
+        x = x + K * (rng - pred)
+        P = (np.eye(4) - np.outer(K, H)) @ P
+
+        # Clamp the estimated speed to the vehicle's budget.
+        sp = math.hypot(x[2], x[3])
+        if sp > self.max_speed_mps and sp > 0.0:
+            scale = self.max_speed_mps / sp
+            x[2], x[3] = x[2] * scale, x[3] * scale
+
+        self._sr_state, self._sr_cov, self._sr_t = x, P, now
+        lat, lon = enu_to_geodetic(x[0], x[1], *self._sr_origin)
+        return lat, lon, float(x[2]), float(x[3])
+
+    def _seed_single_filter(self, latlon, now):
+        """Keep the range-only EKF warm from the multi-receiver fix.
+
+        Snaps the filter position to the latest triangulated fix (and bootstraps
+        it the first time) so dropping to a single receiver continues smoothly;
+        any learnt velocity is preserved.
+        """
+        if not self.single_receiver:
+            return
+        if self._sr_state is None:
+            self._sr_origin = latlon
+            self._sr_state = np.array([0.0, 0.0, 0.0, 0.0], dtype=float)
+            p = self.single_init_pos_std_m ** 2
+            v = self.single_init_vel_std_mps ** 2
+            self._sr_cov = np.diag([p, p, v, v]).astype(float)
+        else:
+            e, n = geodetic_to_enu(latlon[0], latlon[1], *self._sr_origin)
+            self._sr_state[0], self._sr_state[1] = e, n
+        self._sr_t = now
+
+    # ----------------------------------------------------- smooth output
+
+    def _primary_velocity(self):
+        """ENU velocity (m/s) of the winning hypothesis for smooth extrapolation."""
+        if self.motion_model and self._hyps:
+            return self._hyps[0].get('vE', 0.0), self._hyps[0].get('vN', 0.0)
+        return 0.0, 0.0
+
+    def _set_smooth_target(self, lat, lon, vE, vN, now):
+        """Anchor the smooth publisher at a new fix + velocity (atomic store)."""
+        self._smooth = (lat, lon, vE, vN, now)
+
+    def _publish_smooth(self):
+        """Fast timer: dead-reckon the latest fix along its velocity and publish.
+
+        Glides the primary estimate between range updates so it moves smoothly
+        instead of jumping. Stops extrapolating once measurements go stale
+        (older than the freshness window) to avoid a runaway ghost.
+        """
+        sm = self._smooth
+        if sm is None:
+            return
+        lat0, lon0, vE, vN, t = sm
+        dt = time.time() - t
+        if dt < 0.0 or dt > self.freshness_window_s:
+            if dt > self.freshness_window_s:
+                return
+            dt = 0.0
+        sp = math.hypot(vE, vN)
+        if sp > self.max_speed_mps and sp > 0.0:
+            scale = self.max_speed_mps / sp
+            vE, vN = vE * scale, vN * scale
+        lat, lon = enu_to_geodetic(vE * dt, vN * dt, lat0, lon0)
+        self._publish_fix(self.fix_pub, lat, lon)
 
     # ------------------------------------------------------------ estimation
 
@@ -607,6 +843,29 @@ class InferenceNode(Node):
         if pref == 'west':
             return min(geos, key=lambda g: g[1])
         return max(geos, key=lambda g: g[0])  # 'north' (default)
+
+    def _publish_receivers(self, fresh):
+        """Re-publish each surface unit's own GPS as a NavSatFix on
+        ``/owtt_beacon/<beacon>/receiver/<unit>`` (publishers created lazily)."""
+        for r in fresh:
+            unit = r.get('surface_unit')
+            if not unit:
+                continue
+            pub = self._receiver_pubs.get(unit)
+            if pub is None:
+                topic = f"/owtt_beacon/{self.beacon_name}/receiver/{self._safe_token(unit)}"
+                pub = self.create_publisher(NavSatFix, topic, 10)
+                self._receiver_pubs[unit] = pub
+                self.get_logger().info(f"Publishing receiver '{unit}' position on {topic}")
+            self._publish_fix(pub, float(r['unit_lat']), float(r['unit_lon']))
+
+    @staticmethod
+    def _safe_token(name):
+        """Sanitise a unit name into a valid ROS topic token."""
+        token = re.sub(r'[^0-9A-Za-z_]', '_', str(name))
+        if not token or not (token[0].isalpha() or token[0] == '_'):
+            token = '_' + token
+        return token
 
     def _publish_latest_telemetry(self, fresh):
         if not fresh:

@@ -11,6 +11,7 @@
 
     <!-- Triangulation / multilateration -->
     <arg name="update_period_s" default="1.0" description="How often to recompute the fix"/>
+    <arg name="publish_period_s" default="0.1" description="Re-publish (dead-reckon) the estimate this often for smooth motion"/>
     <arg name="freshness_window_s" default="10.0" description="Ignore reports older than this"/>
     <arg name="min_units" default="2" description="Min fresh receivers needed; uses ALL available"/>
     <arg name="frame_id" default="map" description="NavSatFix header frame_id"/>
@@ -20,6 +21,15 @@
     <arg name="motion_model" default="true" description="2-hypothesis CV tracker: reject the mirror over time"/>
     <arg name="max_speed_mps" default="2.0" description="XUUV top speed; caps per-update displacement"/>
     <arg name="use_reported_position" default="true" description="Lock the branch with the beacon's own GPS when present"/>
+
+    <!-- Single-receiver range-only EKF -->
+    <arg name="single_receiver" default="true" description="Track from one receiver with a range-only EKF"/>
+    <arg name="initial_lat" default="0.0" description="Known start lat (0 = use reported GPS / last fix)"/>
+    <arg name="initial_lon" default="0.0" description="Known start lon (0 = use reported GPS / last fix)"/>
+    <arg name="range_std_m" default="2.0" description="Range measurement std-dev (EKF R)"/>
+    <arg name="single_init_pos_std_m" default="50.0" description="Initial position uncertainty (EKF P0)"/>
+    <arg name="single_init_vel_std_mps" default="1.0" description="Initial velocity uncertainty (EKF P0)"/>
+    <arg name="process_accel_std_mps2" default="0.3" description="CV process noise accel std-dev (EKF Q)"/>
 
     <!-- START/STOP command services -->
     <arg name="command_timeout_s" default="10.0" description="Give up if no beacon OK within this (s)"/>
@@ -36,6 +46,7 @@
         <param name="mqtt.password" type="str" value="$(var mqtt_password)"/>
         <param name="mqtt.topic_prefix" type="str" value="$(var mqtt_topic_prefix)"/>
         <param name="inference.update_period_s" value="$(var update_period_s)"/>
+        <param name="inference.publish_period_s" value="$(var publish_period_s)"/>
         <param name="inference.freshness_window_s" value="$(var freshness_window_s)"/>
         <param name="inference.min_units" value="$(var min_units)"/>
         <param name="inference.frame_id" type="str" value="$(var frame_id)"/>
@@ -45,6 +56,13 @@
         <param name="inference.motion_model" value="$(var motion_model)"/>
         <param name="inference.max_speed_mps" value="$(var max_speed_mps)"/>
         <param name="inference.use_reported_position" value="$(var use_reported_position)"/>
+        <param name="inference.single_receiver" value="$(var single_receiver)"/>
+        <param name="inference.initial_lat" value="$(var initial_lat)"/>
+        <param name="inference.initial_lon" value="$(var initial_lon)"/>
+        <param name="inference.range_std_m" value="$(var range_std_m)"/>
+        <param name="inference.single_init_pos_std_m" value="$(var single_init_pos_std_m)"/>
+        <param name="inference.single_init_vel_std_mps" value="$(var single_init_vel_std_mps)"/>
+        <param name="inference.process_accel_std_mps2" value="$(var process_accel_std_mps2)"/>
         <param name="inference.command_timeout_s" value="$(var command_timeout_s)"/>
         <param name="inference.command_repeat_s" value="$(var command_repeat_s)"/>
     </node>

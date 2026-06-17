@@ -12,6 +12,22 @@ output) can be tested end-to-end with no hardware. It loops until Ctrl+C. The
 beacon trajectory is periodic, so every lap starts and ends at the same point;
 the buoys only jitter around fixed positions.
 
+The beacon loops a **simple circle** (radius ``--traj-radius``) centred on a
+configurable offset from the scenario centre (default 90 m west and 150 m south),
+so the beacon -- and its estimate -- are clearly moving round and round.
+
+The simulated telemetry mirrors the beacon's real on-air sentence
+(``P<lat,lon>;D<depth>;C<svs>;S<speed>;B<bt>``): it carries depth, sound velocity,
+speed and the bt tip every report, and the beacon's own **position only while
+seeding** -- the first ``--seed-seconds`` (default 30 s) after each START -- then
+drops position (just like the real beacon saving acoustic bytes once seeded).
+
+The buoys are spread on a wide **East-West baseline ~4x the circle radius**
+(``--buoy-baseline``), centred just north of lolo's start, so the triangulation
+geometry is well-conditioned. Each still **patrols back and forth** along an axis
+rotated 90 deg from the previous one (perpendicular tracks), with a quarter-lap
+phase stagger.
+
 It models the beacon's **broadcast lifecycle**, so it works with the inference
 node's ``/start`` and ``/stop`` services: by default it stays silent until a
 START (just like a real beacon with ``autostart:=false``), streams range reports
@@ -60,6 +76,29 @@ def enu_to_geodetic(dE, dN, lat0, lon0):
     return lat, lon
 
 
+def beacon_enu(phase, args):
+    """Beacon ENU position (m) at trajectory ``phase`` in [0, 2*pi).
+
+    A simple circle of radius ``traj_radius`` centred on the configured offset,
+    looping round and round so the beacon (and its estimate) are clearly moving.
+    """
+    be = args.traj_offset_east + args.traj_radius * math.cos(phase)
+    bn = args.traj_offset_north + args.traj_radius * math.sin(phase)
+    return be, bn
+
+
+def estimate_speed(args, samples=720):
+    """Numerically estimate (mean, max) ground speed (m/s) over one lap."""
+    pts = [beacon_enu(2.0 * math.pi * i / samples, args) for i in range(samples + 1)]
+    seglens = [math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+               for i in range(samples)]
+    dt = args.loop_period / samples
+    perimeter = sum(seglens)
+    v_mean = perimeter / max(1e-6, args.loop_period)
+    v_max = max(seglens) / max(1e-6, dt)
+    return v_mean, v_max
+
+
 class _StdoutLogger:
     """Minimal logger shim so MqttClient can report connection state."""
 
@@ -97,14 +136,26 @@ def parse_args(argv=None):
     p.add_argument('--center-lat', type=float, default=58.82322874, help='Scenario centre latitude')
     p.add_argument('--center-lon', type=float, default=17.63599778, help='Scenario centre longitude')
     p.add_argument('--num-units', type=int, default=2, help='Number of surface-unit buoys')
-    p.add_argument('--buoy-radius', type=float, default=60.0,
-                   help='Buoys sit this far (m) from centre, spaced evenly on a circle')
+    p.add_argument('--buoy-baseline', type=float, default=0.0,
+                   help='Separation (m) between buoys, spread E-W (0 = auto = 4x the circle radius)')
+    p.add_argument('--buoy-north-gap', type=float, default=50.0,
+                   help='Buoy baseline sits this far (m) north of lolo\'s start')
+    p.add_argument('--buoy-east-shift', type=float, default=-30.0,
+                   help='Shift the whole buoy baseline this far (m) east of lolo\'s start (negative = west)')
     p.add_argument('--buoy-jitter', type=float, default=1.0,
-                   help='Std-dev (m) of each buoy bobbing about its mooring')
+                   help='Std-dev (m) of each buoy bobbing about its patrol point')
+    p.add_argument('--buoy-patrol', type=float, default=25.0,
+                   help='Amplitude (m) each buoy patrols back and forth (0 = stay put)')
+    p.add_argument('--buoy-patrol-period', type=float, default=90.0,
+                   help='Seconds for one full back-and-forth buoy patrol')
     p.add_argument('--traj-radius', type=float, default=30.0,
-                   help='Beacon circular trajectory radius (m)')
-    p.add_argument('--loop-period', type=float, default=120.0,
-                   help='Seconds for one full beacon lap (sets speed = 2*pi*r/T)')
+                   help='Beacon circle radius (m)')
+    p.add_argument('--traj-offset-east', type=float, default=-90.0,
+                   help='East offset (m) of the circle centre from the scenario centre (default 90 m west)')
+    p.add_argument('--traj-offset-north', type=float, default=-150.0,
+                   help='North offset (m) of the circle centre from the scenario centre (default 150 m south)')
+    p.add_argument('--loop-period', type=float, default=100.0,
+                   help='Seconds for one full circle lap (smaller = faster; keeps speed under ~2 m/s)')
     p.add_argument('--depth', type=float, default=0.0,
                    help='Beacon depth (m); reports slant range + telemetry depth')
 
@@ -116,9 +167,11 @@ def parse_args(argv=None):
     p.add_argument('--svs-drift', type=float, default=0.5,
                    help='Std-dev (m/s) of per-report svs jitter (proves it is not frozen)')
     p.add_argument('--offset-us', type=float, default=0.0, help='offset_us field in the report (cosmetic)')
+    p.add_argument('--seed-seconds', type=float, default=30.0,
+                   help='Include the beacon true GPS in telemetry for the first N seconds after each START (0=disabled)')
     p.add_argument('--seed-count', type=int, default=0,
-                   help='Include the beacon true GPS in telemetry for the first N reports (0=never)')
-    p.add_argument('--bt-text', default='A_Sim (Status.RUNNING)', help='Fake bt tip string in telemetry')
+                   help='Also seed for at least the first N reports after each START (OR-ed with --seed-seconds; 0=off)')
+    p.add_argument('--bt-text', default='move_to', help='Fake bt tip string in telemetry (mimics lolo, already basenamed)')
     p.add_argument('--seed', type=int, default=None, help='RNG seed for reproducible jitter/noise')
     p.add_argument('--autostart', action='store_true',
                    help='Begin broadcasting immediately instead of waiting for a START command')
@@ -143,24 +196,40 @@ def main(argv=None):
     lat0, lon0 = args.center_lat, args.center_lon
     n_units = max(1, args.num_units)
 
-    # Fixed buoy moorings, evenly spaced on a circle of radius buoy_radius.
+    # The buoys are spread along an East-West baseline ~4x the circle radius (so
+    # the triangulation geometry is well-conditioned), centred just north of
+    # lolo's start (shiftable E/W via buoy_east_shift). buoy_1 is the WEST buoy
+    # patrolling E-W; buoy_2 is the EAST buoy patrolling N-S (axis rotates 90 deg
+    # per index), with a quarter-lap phase stagger.
+    baseline = args.buoy_baseline if args.buoy_baseline > 0.0 else 4.0 * args.traj_radius
+    start_e, start_n = beacon_enu(0.0, args)
+    cluster_e, cluster_n = start_e + args.buoy_east_shift, start_n + args.buoy_north_gap
     buoys = []
     for i in range(n_units):
-        ang = 2.0 * math.pi * i / n_units
+        offset_e = (-0.5 * baseline + baseline * i / (n_units - 1)) if n_units > 1 else 0.0
+        axis = 0.5 * math.pi * i        # 0, 90, 180, 270 deg -> alternating E-W / N-S
         buoys.append({
             'name': f'buoy_{i + 1}',
-            'e': args.buoy_radius * math.cos(ang),
-            'n': args.buoy_radius * math.sin(ang),
+            'e': cluster_e + offset_e,
+            'n': cluster_n,
+            'axis_e': math.cos(axis),
+            'axis_n': math.sin(axis),
+            'phase': 0.5 * math.pi * i,
         })
 
-    speed = 2.0 * math.pi * args.traj_radius / max(1e-6, args.loop_period)
-    log.info(f"Beacon circle r={args.traj_radius:.0f} m, lap={args.loop_period:.0f} s "
-             f"-> speed {speed:.2f} m/s, depth {args.depth:.1f} m.")
-    if speed > 2.0:
-        log.warn(f"Beacon speed {speed:.2f} m/s exceeds the XUUV's ~2 m/s cap; "
+    v_mean, v_max = estimate_speed(args)
+    log.info(f"Beacon circle r={args.traj_radius:.0f} m, centre offset "
+             f"({args.traj_offset_east:+.0f} E, {args.traj_offset_north:+.0f} N) m, "
+             f"lap={args.loop_period:.0f} s -> speed {v_mean:.2f} m/s, depth {args.depth:.1f} m.")
+    if v_max > 2.0:
+        log.warn(f"Beacon speed {v_max:.2f} m/s exceeds the XUUV's ~2 m/s cap; "
                  "the inference motion clamp may lag. Raise --loop-period or lower --traj-radius.")
-    log.info(f"{n_units} buoys at r={args.buoy_radius:.0f} m, publishing every "
-             f"{args.period:.1f} s to {args.topic_prefix}/{args.beacon_name}/range/<unit>. Ctrl+C to stop.")
+    baseline = args.buoy_baseline if args.buoy_baseline > 0.0 else 4.0 * args.traj_radius
+    log.info(f"{n_units} buoys on a {baseline:.0f} m E-W baseline (~{baseline / args.traj_radius:.0f}x the "
+             f"circle radius), {args.buoy_north_gap:.0f} m north of lolo's start, patrolling "
+             f"+/-{args.buoy_patrol:.0f} m on perpendicular tracks (period {args.buoy_patrol_period:.0f} s), "
+             f"publishing every {args.period:.1f} s to "
+             f"{args.topic_prefix}/{args.beacon_name}/range/<unit>. Ctrl+C to stop.")
 
     mqtt = MqttClient(
         args.mqtt_host, args.mqtt_port,
@@ -174,8 +243,14 @@ def main(argv=None):
     cmd_topic = f"{args.topic_prefix}/{args.beacon_name}/cmd"
     cmd_ack_topic = f"{args.topic_prefix}/{args.beacon_name}/cmd_ack"
     ack_unit = buoys[0]['name']
-    # One-element dict so the paho-thread handler can mutate it (atomic in CPython).
-    state = {'broadcasting': args.autostart or args.ignore_commands}
+    # Dict so the paho-thread handler can mutate it (atomic in CPython). Seeding is
+    # (re)armed on each START: position is reported until both seed_until (wall
+    # clock) and seed_remaining (report count) have elapsed.
+    started = args.autostart or args.ignore_commands
+    now0 = time.time()
+    state = {'broadcasting': started,
+             'seed_until': (now0 + args.seed_seconds) if started else 0.0,
+             'seed_remaining': args.seed_count if started else 0}
 
     def on_cmd(topic, payload):
         if not topic.endswith('/cmd'):
@@ -193,6 +268,14 @@ def main(argv=None):
         if want != state['broadcasting']:
             log.info(f"{command} (req {rid}) -> {'begin' if want else 'stop'} broadcasting.")
         state['broadcasting'] = want
+        # Each START re-arms position seeding (beacon re-announces its GPS, then
+        # drops position once seeded) -- exactly what the real beacon does.
+        if want:
+            state['seed_until'] = time.time() + args.seed_seconds
+            state['seed_remaining'] = args.seed_count
+            if args.seed_seconds > 0 or args.seed_count > 0:
+                log.info(f"seeding position for the next {args.seed_seconds:.0f} s "
+                         f"(and >= {args.seed_count} reports).")
         # Relay the beacon's OK (idempotent: ack every valid command).
         if not args.no_command_ack:
             time.sleep(max(0.0, args.command_ack_delay))   # fake acoustic round-trip
@@ -216,35 +299,52 @@ def main(argv=None):
 
     t0 = time.time()
     sent = 0
+    prev_pt = None        # (be, bn, t) for finite-difference ground speed
     try:
         while True:
             if not state['broadcasting']:
                 # Beacon is "off" — emit nothing, just wait for a START.
+                prev_pt = None
                 time.sleep(0.1)
                 continue
             now = time.time()
             phase = 2.0 * math.pi * ((now - t0) % args.loop_period) / args.loop_period
-            be = args.traj_radius * math.cos(phase)
-            bn = args.traj_radius * math.sin(phase)
+            be, bn = beacon_enu(phase, args)
             beacon_lat, beacon_lon = enu_to_geodetic(be, bn, lat0, lon0)
 
             # Beacon's in-situ sound velocity this cycle (jittered, not frozen).
             svs = args.sound_velocity + random.gauss(0.0, args.svs_drift)
 
-            seeding = sent < args.seed_count
+            # Ground speed from successive positions (mimics the beacon's S field).
+            if prev_pt is not None and now > prev_pt[2]:
+                speed = math.hypot(be - prev_pt[0], bn - prev_pt[1]) / (now - prev_pt[2])
+            else:
+                speed = 0.0
+            prev_pt = (be, bn, now)
+
+            seeding = (now < state['seed_until']) or (state['seed_remaining'] > 0)
+            patrol_w = 2.0 * math.pi / max(1e-6, args.buoy_patrol_period)
             ranges_dbg = []
             for b in buoys:
-                ue = b['e'] + random.gauss(0.0, args.buoy_jitter)
-                un = b['n'] + random.gauss(0.0, args.buoy_jitter)
+                # Patrol back and forth along the buoy's (perpendicular) axis, plus
+                # a little bob about the moving point.
+                s = args.buoy_patrol * math.sin(patrol_w * now + b['phase'])
+                ue = b['e'] + s * b['axis_e'] + random.gauss(0.0, args.buoy_jitter)
+                un = b['n'] + s * b['axis_n'] + random.gauss(0.0, args.buoy_jitter)
                 unit_lat, unit_lon = enu_to_geodetic(ue, un, lat0, lon0)
 
                 horizontal = math.hypot(be - ue, bn - un)
                 slant = math.hypot(horizontal, args.depth)
                 rng = max(0.0, slant + random.gauss(0.0, args.range_noise))
 
-                telemetry = {'bt': args.bt_text, 'svs': round(svs, 1)}
-                if args.depth > 0.0:
-                    telemetry['depth'] = round(args.depth, 1)
+                # Mirror lolo's on-air sentence: depth (D), svs (C), speed (S),
+                # bt (B) every report; position (P) only while seeding.
+                telemetry = {
+                    'depth': round(args.depth, 1),
+                    'svs': round(svs, 1),
+                    'speed': round(speed, 2),
+                    'bt': args.bt_text,
+                }
                 if seeding:
                     telemetry['position'] = {'lat': beacon_lat, 'lon': beacon_lon}
 
@@ -270,10 +370,19 @@ def main(argv=None):
                 ranges_dbg.append(f"{b['name']}={rng:.1f}m")
 
             sent += 1
+            if state['seed_remaining'] > 0:
+                state['seed_remaining'] -= 1
+            # Log the transition when seeding ends (both gates elapsed).
+            if seeding and not ((now < state['seed_until']) or (state['seed_remaining'] > 0)):
+                log.info("position seeding done; dropping position from telemetry.")
             if sent % 5 == 1:
-                seed_note = f" [seeding {args.seed_count - sent + 1} left]" if seeding else ""
+                if seeding:
+                    secs_left = max(0.0, state['seed_until'] - now)
+                    seed_note = f" [seeding {secs_left:.0f}s left]"
+                else:
+                    seed_note = ""
                 log.info(f"beacon @ ({beacon_lat:.6f}, {beacon_lon:.6f})  svs={svs:.1f} m/s  "
-                         f"{', '.join(ranges_dbg)}{seed_note}")
+                         f"spd={speed:.2f} m/s  {', '.join(ranges_dbg)}{seed_note}")
             time.sleep(args.period)
     except KeyboardInterrupt:
         log.info("Ctrl+C received; stopping.")

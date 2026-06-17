@@ -97,6 +97,7 @@ mqtt:
 # Inference node (triangulation / multilateration).
 inference:
   update_period_s: 1.0
+  publish_period_s: 0.1         # re-publish (dead-reckon) the estimate this often -> smooth motion
   freshness_window_s: 10.0      # ignore surface-unit reports older than this
   min_units: 2                  # min fresh receivers needed; uses ALL available (scales to N)
   frame_id: "map"
@@ -106,5 +107,14 @@ inference:
   motion_model: true            # 2-hypothesis constant-velocity tracker: rejects the mirror over time
   max_speed_mps: 2.0            # XUUV top speed; caps per-update displacement
   use_reported_position: true   # lock the branch with the beacon's own GPS when telemetry carries it
+  # Single-receiver range-only EKF: when only ONE unit reports, track the beacon
+  # from a known initial position + constant-velocity vehicle model + range.
+  single_receiver: true         # fall back to range-only tracking with one receiver
+  initial_lat: 0.0              # known start lat (0 = use beacon's reported GPS, else last fix)
+  initial_lon: 0.0              # known start lon
+  range_std_m: 2.0              # range measurement std-dev (EKF R)
+  single_init_pos_std_m: 50.0   # initial position uncertainty (EKF P0)
+  single_init_vel_std_mps: 1.0  # initial velocity uncertainty (EKF P0)
+  process_accel_std_mps2: 0.3   # CV process noise: accel std-dev (EKF Q)
   command_timeout_s: 10.0       # /start /stop service: give up if no beacon OK within this
   command_repeat_s: 1.5         # re-publish the MQTT command this often until acked
