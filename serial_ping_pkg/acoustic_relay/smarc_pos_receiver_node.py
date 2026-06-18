@@ -152,7 +152,7 @@ class SmarcPosReceiverNode(Node):
                 self.get_logger().warn(f"Unknown modem_id {modem_id}, not publishing.")
 
         except Exception as e:
-            self.get_logger().error(f"Failed to parse data '{data}': {e}")
+            self.get_logger().error(f"Failed to parse data '{line}': {e}")
 
 def main(args=None):
     rclpy.init(args=args)

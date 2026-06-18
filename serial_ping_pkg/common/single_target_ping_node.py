@@ -90,7 +90,7 @@ class SingleTargetPingNode(Node):
         # Create timer for periodic pinging
         self.ping_timer = self.create_timer(self.timer_period, self.ping_callback)
         
-        self.get_logger().info(f"Single Target Ping Node initialized:")
+        self.get_logger().info("Single Target Ping Node initialized:")
         self.get_logger().info(f"  - Robot name: {self.robot_name}")
         self.get_logger().info(f"  - Ping command: {self.ping_command}")
         self.get_logger().info(f"  - Timer period: {self.timer_period}s")

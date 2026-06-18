@@ -24,7 +24,6 @@ import rclpy
 from rclpy.node import Node
 from geographic_msgs.msg import GeoPoint
 from sensor_msgs.msg import NavSatFix
-from std_msgs.msg import Float32
 from serial_ping_pkg.utils import load_yaml_config, init_serial
 from serial_ping_pkg.common.ping_protocol import (
     ping_response_complete,

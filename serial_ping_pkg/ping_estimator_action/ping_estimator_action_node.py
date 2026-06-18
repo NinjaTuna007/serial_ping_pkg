@@ -49,7 +49,7 @@ from smarc_action_base.gentler_action_server import GentlerActionServer
 from smarc_utilities.georef_utils import convert_latlon_to_utm
 
 from serial_ping_pkg.utils import load_yaml_config, init_serial
-from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
+from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode
 from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 
 from rclpy.callback_groups import ReentrantCallbackGroup
