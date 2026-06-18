@@ -1,0 +1,14 @@
+# Defaults for the tuper_twtt nodes (twtt_leader_node, twtt_follower_node).
+# Every value is overridable via launch args; this file is the bare-`ros2 run` fallback.
+serial:
+  port: "/dev/ttyUSB0"
+  port_fallback: "/dev/ttyUSB4"
+  baudrate: 9600
+  sound_velocity: 1500.0
+  timeout_threshold: 2.0
+
+# Realistic (position, distance) ping settings used by the leader.
+leader_gps_topic: "/follower/leader2/core/gps"
+leader_gps_msg_type: "NavSatFix"   # or "GeoPoint"
+ping_command: "$P111"
+timer_period: 5.0

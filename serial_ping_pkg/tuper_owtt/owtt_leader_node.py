@@ -47,7 +47,7 @@ class OwttLeaderNode(WireSafeSerialNode):
     def __init__(self):
         super().__init__('owtt_leader_node')
 
-        config = load_yaml_config('serial_ping_pkg', 'tuper_owtt_config.yaml')
+        config = load_yaml_config('serial_ping_pkg', 'tuper_owtt/tuper_owtt_config.yaml')
         serial_cfg = config.get('serial', {})
         teensy_cfg = config.get('teensy', {})
         leader_cfg = config.get('leader', {})

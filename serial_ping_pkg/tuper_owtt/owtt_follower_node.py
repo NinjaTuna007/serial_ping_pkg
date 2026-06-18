@@ -14,7 +14,7 @@ into a range using::
 ``sound_velocity`` defaults to 1500 m/s but is sourced live from a configurable
 topic/msg type (default ``/lolo/sensors/svs`` of type ``svs_interfaces/msg/SVS``,
 field ``svs``) when available. It then publishes leader position + range on the
-same topics the legacy ``informed_follower_node`` used:
+same topics the legacy ``twtt_follower_node`` used:
 ``/<leader>/smarc/latlon`` and ``/<leader>/distance``.
 """
 
@@ -40,7 +40,7 @@ class OwttFollowerNode(WireSafeSerialNode):
     def __init__(self):
         super().__init__('owtt_follower_node')
 
-        config = load_yaml_config('serial_ping_pkg', 'tuper_owtt_config.yaml')
+        config = load_yaml_config('serial_ping_pkg', 'tuper_owtt/tuper_owtt_config.yaml')
         serial_cfg = config.get('serial', {})
         owtt_cfg = config.get('owtt', {})
         follower_cfg = config.get('follower', {})

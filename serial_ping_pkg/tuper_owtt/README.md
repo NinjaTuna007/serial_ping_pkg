@@ -1,7 +1,7 @@
 # tuper_owtt
 
 One-way-travel-time (OWTT) acoustic ranging stack. Unlike
-`informed_leader_follower` (two-way ping → reply → broadcast), here **leaders
+`tuper_twtt` (two-way ping → reply → broadcast), here **leaders
 just broadcast their position** and each receiver derives range from the
 one-way acoustic travel time measured by a **Teensy 4.1** front-end.
 
@@ -10,7 +10,7 @@ Teensy over serial (115200 baud). The Teensy does the precise timing (PPS +
 OCXO disciplined), relays to/from the modem, and is configured into one of three
 modes by a `$Y` command.
 
-> The legacy `informed_leader_follower` stack is untouched and still works on the
+> The legacy `tuper_twtt` stack is untouched and still works on the
 > same upgraded hardware; this is the parallel "new system" software.
 
 ---
@@ -113,7 +113,7 @@ which leader it belongs to.
 
 ## Parameters
 
-Defaults come from `config/tuper_owtt_config.yaml`; everything is overridable as
+Defaults come from `config/tuper_owtt/tuper_owtt_config.yaml`; everything is overridable as
 a launch argument.
 
 ### Common (serial / Teensy)

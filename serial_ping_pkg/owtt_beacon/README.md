@@ -179,6 +179,17 @@ The subscribe `+` wildcard means the inference node automatically picks up
 }
 ```
 
+`stamp` is the surface unit's **local time when the range was measured**. The
+inference node uses it (not the MQTT arrival time) as the measurement epoch, so
+slow/jittery MQTT links don't mis-time a range — a report that takes several
+seconds to arrive is still placed at the moment it was actually measured
+(`inference.use_report_stamp`, default on). This drives the freshness window,
+the motion-tracker `dt`, the single-receiver EKF `dt`, and the smooth
+extrapolation. It assumes the units' clocks are roughly NTP-synced to the
+inference host; if a report's `stamp` lands more than
+`inference.max_clock_skew_s` (default 30 s) from arrival, the clock is treated
+as unsynced and arrival time is used instead.
+
 ## Launch
 
 ```bash
@@ -213,7 +224,7 @@ ros2 service call /owtt_beacon/lolo/start std_srvs/srv/Trigger
 ros2 service call /owtt_beacon/lolo/stop  std_srvs/srv/Trigger
 ```
 
-All config defaults live in `config/owtt_beacon_config.yaml`; every value is
+All config defaults live in `config/owtt_beacon/owtt_beacon_config.yaml`; every value is
 overridable as a launch argument.
 
 ### `owtt_beacon_node.launch` arguments

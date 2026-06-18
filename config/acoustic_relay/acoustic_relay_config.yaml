@@ -1,0 +1,14 @@
+# Defaults for the acoustic_relay nodes (smarc_pos_broadcast_node, smarc_pos_receiver_node).
+# Every value is overridable via launch args; this file is the bare-`ros2 run` fallback.
+serial:
+  port: "/dev/ttyUSB0"
+  port_fallback: "/dev/ttyUSB1"
+  baudrate: 9600
+
+# Receiver robot table as parallel arrays (index-aligned: names[i] <-> modem_ids[i] <-> topics[i]).
+# Modem ids are integers (zero-padded to 3 digits on use). A blank/missing topic falls back to
+# /relay_<name>/smarc/latlon. Override from launch with value-sep lists.
+pos_receiver:
+  names: ["lolo", "sam"]
+  modem_ids: [7, 111]
+  topics: ["/relay_lolo/smarc/latlon", "/relay_sam/smarc/latlon"]

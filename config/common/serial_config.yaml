@@ -1,0 +1,10 @@
+# Defaults for the general-purpose serial_ping_node (alternating two-leader ping).
+# Every value is overridable via launch args; this file is the bare-`ros2 run` fallback.
+serial:
+  port: "/dev/ttyUSB0"
+  port_fallback: "/dev/ttyUSB4"
+  baudrate: 9600
+  leader1: "$P001"
+  leader2: "$P002"
+  sound_velocity: 1500.0
+  timeout_threshold: 0.5

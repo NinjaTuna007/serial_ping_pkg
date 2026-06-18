@@ -43,7 +43,7 @@ class SurfaceUnitNode(WireSafeSerialNode):
     def __init__(self):
         super().__init__('owtt_surface_unit_node')
 
-        config = load_yaml_config('serial_ping_pkg', 'owtt_beacon_config.yaml')
+        config = load_yaml_config('serial_ping_pkg', 'owtt_beacon/owtt_beacon_config.yaml')
         serial_cfg = config.get('serial', {})
         owtt_cfg = config.get('owtt', {})
         teensy_cfg = config.get('teensy', {})

@@ -1,0 +1,75 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="beacon_name" default="lolo" description="Beacon being triangulated; empty = any"/>
+
+    <!-- MQTT downlink (subscribe to surface-unit range reports) -->
+    <arg name="mqtt_host" default="20.240.40.232" description="MQTT broker host (smarc/WARA-PS)"/>
+    <arg name="mqtt_port" default="1884" description="MQTT broker port"/>
+    <arg name="mqtt_username" default="" description="MQTT username (optional)"/>
+    <arg name="mqtt_password" default="" description="MQTT password (optional)"/>
+    <arg name="mqtt_topic_prefix" default="tuper/owtt_beacon" description="MQTT topic prefix (context/subcontext)"/>
+
+    <!-- Triangulation / multilateration -->
+    <arg name="update_period_s" default="1.0" description="How often to recompute the fix"/>
+    <arg name="publish_period_s" default="0.1" description="Re-publish (dead-reckon) the estimate this often for smooth motion"/>
+    <arg name="freshness_window_s" default="10.0" description="Ignore reports older than this"/>
+    <arg name="min_units" default="2" description="Min fresh receivers needed; uses ALL available"/>
+    <arg name="frame_id" default="map" description="NavSatFix header frame_id"/>
+    <arg name="first_fix_prefer" default="north" description="Disambiguate first fix: north|south|east|west"/>
+    <arg name="publish_both" default="true" description="With 2 receivers, also publish the mirror fix on .../estimate_alt"/>
+    <arg name="assumed_depth_m" default="0.0" description="Beacon depth (m) if telemetry has none; slant to horizontal"/>
+    <arg name="motion_model" default="true" description="2-hypothesis CV tracker: reject the mirror over time"/>
+    <arg name="max_speed_mps" default="2.0" description="XUUV top speed; caps per-update displacement"/>
+    <arg name="use_reported_position" default="true" description="Lock the branch with the beacon's own GPS when present"/>
+
+    <!-- Single-receiver range-only EKF -->
+    <arg name="single_receiver" default="true" description="Track from one receiver with a range-only EKF"/>
+    <arg name="initial_lat" default="0.0" description="Known start lat (0 = use reported GPS / last fix)"/>
+    <arg name="initial_lon" default="0.0" description="Known start lon (0 = use reported GPS / last fix)"/>
+    <arg name="range_std_m" default="2.0" description="Range measurement std-dev (EKF R)"/>
+    <arg name="single_init_pos_std_m" default="50.0" description="Initial position uncertainty (EKF P0)"/>
+    <arg name="single_init_vel_std_mps" default="1.0" description="Initial velocity uncertainty (EKF P0)"/>
+    <arg name="process_accel_std_mps2" default="0.3" description="CV process noise accel std-dev (EKF Q)"/>
+
+    <!-- Timestamps: treat reports at their measurement time, not MQTT arrival -->
+    <arg name="use_report_stamp" default="true" description="Use the report 'stamp' (measurement time) instead of MQTT arrival time"/>
+    <arg name="max_clock_skew_s" default="30.0" description="If |arrival-stamp| exceeds this, sender clock is unsynced -> use arrival time"/>
+
+    <!-- START/STOP command services -->
+    <arg name="command_timeout_s" default="10.0" description="Give up if no beacon OK within this (s)"/>
+    <arg name="command_repeat_s" default="1.5" description="Re-publish the MQTT command this often until acked (s)"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="owtt_inference_node"
+          name="owtt_inference_node"
+          output="screen">
+        <param name="beacon.name" type="str" value="$(var beacon_name)"/>
+        <param name="mqtt.host" type="str" value="$(var mqtt_host)"/>
+        <param name="mqtt.port" value="$(var mqtt_port)"/>
+        <param name="mqtt.username" type="str" value="$(var mqtt_username)"/>
+        <param name="mqtt.password" type="str" value="$(var mqtt_password)"/>
+        <param name="mqtt.topic_prefix" type="str" value="$(var mqtt_topic_prefix)"/>
+        <param name="inference.update_period_s" value="$(var update_period_s)"/>
+        <param name="inference.publish_period_s" value="$(var publish_period_s)"/>
+        <param name="inference.freshness_window_s" value="$(var freshness_window_s)"/>
+        <param name="inference.min_units" value="$(var min_units)"/>
+        <param name="inference.frame_id" type="str" value="$(var frame_id)"/>
+        <param name="inference.first_fix_prefer" type="str" value="$(var first_fix_prefer)"/>
+        <param name="inference.publish_both" value="$(var publish_both)"/>
+        <param name="inference.assumed_depth_m" value="$(var assumed_depth_m)"/>
+        <param name="inference.motion_model" value="$(var motion_model)"/>
+        <param name="inference.max_speed_mps" value="$(var max_speed_mps)"/>
+        <param name="inference.use_reported_position" value="$(var use_reported_position)"/>
+        <param name="inference.single_receiver" value="$(var single_receiver)"/>
+        <param name="inference.initial_lat" value="$(var initial_lat)"/>
+        <param name="inference.initial_lon" value="$(var initial_lon)"/>
+        <param name="inference.range_std_m" value="$(var range_std_m)"/>
+        <param name="inference.single_init_pos_std_m" value="$(var single_init_pos_std_m)"/>
+        <param name="inference.single_init_vel_std_mps" value="$(var single_init_vel_std_mps)"/>
+        <param name="inference.process_accel_std_mps2" value="$(var process_accel_std_mps2)"/>
+        <param name="inference.use_report_stamp" value="$(var use_report_stamp)"/>
+        <param name="inference.max_clock_skew_s" value="$(var max_clock_skew_s)"/>
+        <param name="inference.command_timeout_s" value="$(var command_timeout_s)"/>
+        <param name="inference.command_repeat_s" value="$(var command_repeat_s)"/>
+    </node>
+</launch>

@@ -146,7 +146,7 @@ class InferenceNode(Node):
     def __init__(self):
         super().__init__('owtt_inference_node')
 
-        config = load_yaml_config('serial_ping_pkg', 'owtt_beacon_config.yaml')
+        config = load_yaml_config('serial_ping_pkg', 'owtt_beacon/owtt_beacon_config.yaml')
         mqtt_cfg = config.get('mqtt', {})
         inf_cfg = config.get('inference', {})
         beacon_cfg = config.get('beacon', {})
@@ -193,6 +193,15 @@ class InferenceNode(Node):
         self.declare_parameter('inference.single_init_pos_std_m', inf_cfg.get('single_init_pos_std_m', 50.0))
         self.declare_parameter('inference.single_init_vel_std_mps', inf_cfg.get('single_init_vel_std_mps', 1.0))
         self.declare_parameter('inference.process_accel_std_mps2', inf_cfg.get('process_accel_std_mps2', 0.3))
+        # Timestamp handling. Each report carries the surface unit's local 'stamp'
+        # (set when the range was actually measured). Use it -- not the MQTT
+        # arrival time -- as the measurement epoch, so delayed/jittery MQTT
+        # delivery is placed correctly in time (freshness, filter dt, smoothing).
+        # Assumes the surface units' clocks are roughly NTP-synced to this host.
+        self.declare_parameter('inference.use_report_stamp', inf_cfg.get('use_report_stamp', True))
+        # Trust the report 'stamp' only when |arrival - stamp| <= this; beyond it
+        # the sender's clock is assumed unsynced and we fall back to arrival time.
+        self.declare_parameter('inference.max_clock_skew_s', inf_cfg.get('max_clock_skew_s', 30.0))
         # START/STOP command orchestration (services -> MQTT -> surface units).
         self.declare_parameter('inference.command_timeout_s', inf_cfg.get('command_timeout_s', 10.0))
         self.declare_parameter('inference.command_repeat_s', inf_cfg.get('command_repeat_s', 1.5))
@@ -222,6 +231,8 @@ class InferenceNode(Node):
         self.single_init_pos_std_m = self.get_parameter('inference.single_init_pos_std_m').get_parameter_value().double_value
         self.single_init_vel_std_mps = self.get_parameter('inference.single_init_vel_std_mps').get_parameter_value().double_value
         self.process_accel_std_mps2 = self.get_parameter('inference.process_accel_std_mps2').get_parameter_value().double_value
+        self.use_report_stamp = self.get_parameter('inference.use_report_stamp').get_parameter_value().bool_value
+        self.max_clock_skew_s = self.get_parameter('inference.max_clock_skew_s').get_parameter_value().double_value
         self.command_timeout_s = self.get_parameter('inference.command_timeout_s').get_parameter_value().double_value
         self.command_repeat_s = self.get_parameter('inference.command_repeat_s').get_parameter_value().double_value
 
@@ -315,8 +326,37 @@ class InferenceNode(Node):
             return
         unit = report.get('surface_unit') or topic.rsplit('/', 1)[-1]
         report['recv_time'] = time.time()
+        report['meas_time'] = self._measurement_time(report, unit)
         with self._lock:
             self._reports[unit] = report
+
+    def _measurement_time(self, report, unit):
+        """Epoch (s, this host's clock) at which the range was actually measured.
+
+        Prefers the surface unit's local 'stamp' so MQTT/network delay does not
+        mis-time the measurement. Guards against an unsynced sender clock: if the
+        stamp sits more than ``max_clock_skew_s`` away from the arrival time, it
+        is deemed untrustworthy and the arrival time is used instead.
+        """
+        recv = report['recv_time']
+        if not self.use_report_stamp:
+            return recv
+        stamp = report.get('stamp')
+        if not isinstance(stamp, (int, float)):
+            return recv
+        skew = recv - float(stamp)      # transport latency (+) plus clock offset
+        if -self.max_clock_skew_s <= skew <= self.max_clock_skew_s:
+            return float(stamp)
+        self.get_logger().warn(
+            f"Report from '{unit}' has stamp {skew:.1f}s from arrival "
+            f"(> max_clock_skew_s {self.max_clock_skew_s:.0f}s); clock likely "
+            "unsynced -- using arrival time.", throttle_duration_sec=10.0)
+        return recv
+
+    @staticmethod
+    def _meas_time(report):
+        """Measurement epoch for a stored report (falls back to arrival time)."""
+        return report.get('meas_time', report.get('recv_time', 0.0))
 
     def _on_cmd_ack(self, payload):
         """A surface unit relayed the beacon's OK for the in-flight command."""
@@ -422,7 +462,7 @@ class InferenceNode(Node):
             # Reports with a known position (regardless of range): used for the
             # receiver NavSatFix re-publish and the telemetry passthrough.
             located = [r for r in self._reports.values()
-                       if (now - r.get('recv_time', 0.0)) <= self.freshness_window_s
+                       if (now - self._meas_time(r)) <= self.freshness_window_s
                        and r.get('unit_lat') is not None
                        and r.get('unit_lon') is not None]
 
@@ -440,7 +480,7 @@ class InferenceNode(Node):
             # Not enough for triangulation. With exactly one receiver we can still
             # track via the range-only EKF (known initial pos + vehicle model).
             if len(fresh) == 1 and self.single_receiver:
-                self._run_single_receiver(fresh[0], now)
+                self._run_single_receiver(fresh[0], self._meas_time(fresh[0]))
             else:
                 self.get_logger().info(
                     f"Need >={need} fresh surface-unit reports to triangulate; "
@@ -451,17 +491,21 @@ class InferenceNode(Node):
         if not sols:
             return
 
+        # Epoch of this fix = the freshest range measurement feeding it (sender
+        # clock), so the filter dt and the smooth extrapolation reflect when the
+        # ranges were actually taken, not when MQTT happened to deliver them.
+        epoch = max(self._meas_time(r) for r in fresh)
         reported = self._reported_position(fresh) if self.use_reported_position else None
-        primary, mirror = self._estimate(sols, now, reported)
+        primary, mirror = self._estimate(sols, epoch, reported)
         lat, lon = primary
         self._prev_estimate = primary
         # Keep the range-only EKF aligned with the multi-receiver fix so a later
         # drop to a single receiver continues smoothly from the right place.
-        self._seed_single_filter(primary, now)
+        self._seed_single_filter(primary, epoch)
         # Hand the fix + its velocity to the smooth publisher (it streams the
         # primary estimate); the mirror is published here at the update rate.
         vE, vN = self._primary_velocity()
-        self._set_smooth_target(lat, lon, vE, vN, now)
+        self._set_smooth_target(lat, lon, vE, vN, epoch)
 
         units = ', '.join(f"{r['surface_unit']}={r['range_m']:.1f}m" for r in fresh)
         if not (self.publish_both and len(sols) == 2):
@@ -530,7 +574,7 @@ class InferenceNode(Node):
                       if isinstance(r.get('telemetry'), dict)
                       and r['telemetry'].get('depth') is not None]
         if with_depth:
-            newest = max(with_depth, key=lambda r: r['recv_time'])
+            newest = max(with_depth, key=self._meas_time)
             try:
                 return max(0.0, float(newest['telemetry']['depth']))
             except (TypeError, ValueError):
@@ -796,7 +840,7 @@ class InferenceNode(Node):
                     and r['telemetry']['position'].get('lon') is not None]
         if not with_pos:
             return None
-        newest = max(with_pos, key=lambda r: r['recv_time'])
+        newest = max(with_pos, key=self._meas_time)
         p = newest['telemetry']['position']
         try:
             return (float(p['lat']), float(p['lon']))
@@ -870,7 +914,7 @@ class InferenceNode(Node):
     def _publish_latest_telemetry(self, fresh):
         if not fresh:
             return
-        latest = max(fresh, key=lambda r: r['recv_time'])
+        latest = max(fresh, key=self._meas_time)
         telem = latest.get('telemetry') or {}
         msg = String()
         msg.data = json.dumps(telem)

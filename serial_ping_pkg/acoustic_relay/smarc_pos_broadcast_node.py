@@ -1,15 +1,35 @@
+"""Acoustic-relay position broadcaster node.
+
+Subscribes to one robot's SMARC navigation topics (lat/lon, depth, heading) and
+broadcasts a compact ``$B`` position frame over the acoustic modem on each fresh
+latlon update (rate-limited to once every ~3 s). The frame is built by
+``acoustic_relay.pos_protocol.build_pos_broadcast`` and is decoded on the other
+side by ``smarc_pos_receiver_node``.
+
+Key parameters (serial defaults from ``config/acoustic_relay/acoustic_relay_config.yaml``):
+- ``serial.port`` / ``serial.port_fallback`` / ``serial.baudrate`` -- modem link.
+- ``robot_name`` -- builds the subscribed topic names (default ``lolo``).
+
+Published topics: none (output goes out over the serial modem).
+
+Subscribed topics:
+- ``/<robot_name>/smarc/latlon`` (``geographic_msgs/GeoPoint``) -- triggers a broadcast.
+- ``/<robot_name>/smarc/depth`` (``std_msgs/Float32``) -- latest depth, cached.
+- ``/<robot_name>/smarc/heading`` (``std_msgs/Float32``) -- latest heading, cached.
+"""
 import rclpy
 from rclpy.node import Node
 from geographic_msgs.msg import GeoPoint
 from std_msgs.msg import Float32
 from serial_ping_pkg.utils import load_yaml_config, init_serial
+from serial_ping_pkg.acoustic_relay.pos_protocol import build_pos_broadcast
 
 class SmarcPosBroadcastNode(Node):
     def __init__(self):
         super().__init__('smarc_pos_broadcast_node')
 
         # Declare parameters with defaults from YAML
-        config = load_yaml_config('serial_ping_pkg', 'serial_config.yaml')
+        config = load_yaml_config('serial_ping_pkg', 'acoustic_relay/acoustic_relay_config.yaml')
         self.declare_parameter('serial.port', config['serial']['port'])
         self.declare_parameter('serial.port_fallback', config['serial']['port_fallback'])
         self.declare_parameter('serial.baudrate', config['serial']['baudrate'])
@@ -69,17 +89,8 @@ class SmarcPosBroadcastNode(Node):
         if (current_time - self.last_msg_time).nanoseconds < 3e9:
             return
         self.last_msg_time = current_time
-        lat = msg.latitude
-        lon = msg.longitude
-        data = f"{lat:.8f},{lon:.8f}"
-        # Format depth as 5 chars: ,DDD.D
-        depth_val = max(0.0, min(self.latest_depth, 999.9))
-        depth_str = f",{depth_val:05.1f}"
-        # Format heading as 3 chars: ,DDD
-        heading_val = max(0, min(self.latest_heading, 359))
-        heading_str = f",{heading_val:03d}"
-        n_chars = len(data) + len(depth_str) + len(heading_str)
-        out_str = f"$B{n_chars}{data}{depth_str}{heading_str}"
+        out_str = build_pos_broadcast(
+            msg.latitude, msg.longitude, self.latest_depth, self.latest_heading)
         try:
             self.ser.write((out_str + "\r\n").encode())
             self.get_logger().info(f"Broadcasted: {out_str}")

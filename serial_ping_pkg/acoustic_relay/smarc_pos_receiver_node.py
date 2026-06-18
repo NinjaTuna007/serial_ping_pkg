@@ -1,16 +1,38 @@
-# Message format: #B<modem-id(3)><num_chars(2)><data>\r\n
+"""Acoustic-relay position receiver node.
+
+Reads ``#B<modem-id(3)><num_chars(2)><data>`` broadcast frames off the modem,
+decodes them via ``acoustic_relay.pos_protocol.parse_pos_broadcast``, and
+republishes each sending robot's position (and depth/heading when present) onto
+its own ROS topic. The robot table is supplied as index-aligned parallel arrays
+so it is fully overridable from the launch CLI.
+
+Key parameters (serial defaults from ``config/acoustic_relay/acoustic_relay_config.yaml``):
+- ``serial.port`` / ``serial.port_fallback`` / ``serial.baudrate`` -- modem link.
+- ``robots.names`` / ``robots.modem_ids`` / ``robots.topics`` -- parallel arrays
+  (``names[i]`` <-> ``modem_ids[i]`` <-> ``topics[i]``); modem ids are ints,
+  zero-padded to 3 digits on use; a blank topic falls back to
+  ``/relay_<name>/smarc/latlon``.
+
+Published topics (per configured robot):
+- ``<topics[i]>`` (``geographic_msgs/GeoPoint``) -- received position.
+- ``/relay_<name>/smarc/depth`` and ``/relay_<name>/smarc/heading``
+  (``std_msgs/Float32``) -- when the frame carries them.
+
+Subscribed topics: none (input arrives over the serial modem).
+"""
 
 import rclpy
 from rclpy.node import Node
 from geographic_msgs.msg import GeoPoint
 from serial_ping_pkg.utils import init_serial, load_yaml_config
+from serial_ping_pkg.acoustic_relay.pos_protocol import parse_pos_broadcast
 
 class SmarcPosReceiverNode(Node):
     def __init__(self):
         super().__init__('smarc_pos_receiver_node')
 
         # Load config from YAML (used only as defaults for the declared params)
-        config = load_yaml_config('serial_ping_pkg', 'serial_config.yaml')
+        config = load_yaml_config('serial_ping_pkg', 'acoustic_relay/acoustic_relay_config.yaml')
         pos_receiver_cfg = config.get('pos_receiver', {})
         serial_cfg = config.get('serial', {})
 
@@ -21,6 +43,19 @@ class SmarcPosReceiverNode(Node):
         self.declare_parameter('serial.port_fallback', serial_cfg.get('port_fallback', '/dev/ttyUSB1'))
         self.declare_parameter('serial.baudrate', serial_cfg.get('baudrate', 9600))
 
+        # Robot table as index-aligned parallel arrays so it is fully overridable
+        # from the launch CLI (names[i] <-> modem_ids[i] <-> topics[i]). Modem ids
+        # are integers and zero-padded to three digits on use; a blank topic falls
+        # back to /relay_<name>/smarc/latlon.
+        default_names = list(pos_receiver_cfg.get('names', ['lolo', 'sam']))
+        default_modem_ids = [int(m) for m in pos_receiver_cfg.get('modem_ids', [7, 111])]
+        default_topics = list(pos_receiver_cfg.get('topics', [])) or [
+            f"/relay_{name}/smarc/latlon" for name in default_names
+        ]
+        self.declare_parameter('robots.names', default_names)
+        self.declare_parameter('robots.modem_ids', default_modem_ids)
+        self.declare_parameter('robots.topics', default_topics)
+
         self.port = self.get_parameter('serial.port').get_parameter_value().string_value
         self.port_fallback = self.get_parameter('serial.port_fallback').get_parameter_value().string_value
         self.baudrate = self.get_parameter('serial.baudrate').get_parameter_value().integer_value
@@ -30,13 +65,23 @@ class SmarcPosReceiverNode(Node):
             rclpy.shutdown()
             return
 
-        # Build robot configuration from config file
+        # Build robot configuration from the parallel-array parameters.
+        names = list(self.get_parameter('robots.names').get_parameter_value().string_array_value)
+        modem_ids = list(self.get_parameter('robots.modem_ids').get_parameter_value().integer_array_value)
+        topics = list(self.get_parameter('robots.topics').get_parameter_value().string_array_value)
+
+        if len(names) != len(modem_ids):
+            self.get_logger().error(
+                f"robots.names ({len(names)}) and robots.modem_ids ({len(modem_ids)}) "
+                "must be the same length; no robots configured."
+            )
+            names, modem_ids = [], []
+
         self.robot_config = {}
         self.robot_publishers = {}
-        robots = pos_receiver_cfg.get('robots', {})
-        for robot_name, robot_info in robots.items():
-            modem_id = str(robot_info.get('modem_id')).zfill(3)
-            topic = robot_info.get('topic', f"/relay_{robot_name}/smarc/latlon")
+        for i, robot_name in enumerate(names):
+            modem_id = str(modem_ids[i]).zfill(3)
+            topic = topics[i] if i < len(topics) and topics[i] else f"/relay_{robot_name}/smarc/latlon"
             self.robot_config[modem_id] = {'name': robot_name, 'topic': topic}
             self.robot_publishers[modem_id] = self.create_publisher(GeoPoint, topic, 10)
             self.get_logger().info(f"Configured robot {robot_name} with modem ID {modem_id} -> topic {topic}")
@@ -59,37 +104,15 @@ class SmarcPosReceiverNode(Node):
 
         self.get_logger().info(f"Received line: {line}")
         # Expecting: #B<modem-id(3)><num_chars(2)><data>
-        if not line.startswith('#B'):
+        parsed = parse_pos_broadcast(line)
+        if parsed is None:
+            self.get_logger().warn(f"Invalid or malformed position broadcast: {line}")
             return
-        if len(line) < 7:
-            self.get_logger().warn(f"Line too short: {line}")
-            return
-        modem_id = line[2:5]
-        num_chars_str = line[5:7]
+        modem_id, lat, lon, depth, heading = parsed
         try:
-            num_chars = int(num_chars_str)
-        except ValueError:
-            self.get_logger().warn(f"Invalid num_chars: {num_chars_str} in line: {line}")
-            return
-        data = line[7:7+num_chars]
-        if len(data) != num_chars:
-            self.get_logger().warn(f"Data length mismatch in line: {line}")
-            return
-        try:
-            # Split data into lat, lon, depth, heading
-            parts = data.split(',')
-            lat_str, lon_str = parts[0], parts[1]
-            depth_str = None
-            heading_str = None
-            if len(parts) == 4:
-                depth_str = parts[2]
-                heading_str = parts[3]
-            elif len(parts) == 3:
-                # If only depth or heading is present, assume it's depth
-                depth_str = parts[2]
             msg = GeoPoint()
-            msg.latitude = float(lat_str)
-            msg.longitude = float(lon_str)
+            msg.latitude = lat
+            msg.longitude = lon
             msg.altitude = 0.0
 
             # Use dynamic robot configuration
@@ -100,9 +123,9 @@ class SmarcPosReceiverNode(Node):
                     f"[{self.get_name()}] Published GeoPoint to {robot_info['topic']} from modem {modem_id} ({robot_info['name']}): lat={msg.latitude}, lon={msg.longitude}"
                 )
                 # Publish depth if present
-                if depth_str is not None:
+                if depth is not None:
                     try:
-                        depth_val = float(depth_str)
+                        depth_val = depth
                         depth_topic = f"/relay_{robot_info['name']}/smarc/depth"
                         depth_pub = self.create_publisher(__import__('std_msgs.msg', fromlist=['Float32']).Float32, depth_topic, 10)
                         from std_msgs.msg import Float32
@@ -113,9 +136,9 @@ class SmarcPosReceiverNode(Node):
                     except Exception as e:
                         self.get_logger().warn(f"Failed to parse/publish depth: {e}")
                 # Publish heading if present
-                if heading_str is not None:
+                if heading is not None:
                     try:
-                        heading_val = int(heading_str)
+                        heading_val = heading
                         heading_topic = f"/relay_{robot_info['name']}/smarc/heading"
                         heading_pub = self.create_publisher(__import__('std_msgs.msg', fromlist=['Float32']).Float32, heading_topic, 10)
                         from std_msgs.msg import Float32

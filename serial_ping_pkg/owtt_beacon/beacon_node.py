@@ -53,7 +53,7 @@ class BeaconNode(WireSafeSerialNode):
     def __init__(self):
         super().__init__('owtt_beacon_node')
 
-        config = load_yaml_config('serial_ping_pkg', 'owtt_beacon_config.yaml')
+        config = load_yaml_config('serial_ping_pkg', 'owtt_beacon/owtt_beacon_config.yaml')
         serial_cfg = config.get('serial', {})
         teensy_cfg = config.get('teensy', {})
         beacon_cfg = config.get('beacon', {})

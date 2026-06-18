@@ -1,0 +1,6 @@
+[submodule "vendor/succorfish"]
+	path = vendor/succorfish
+	url = https://github.com/NinjaTuna007/fishsuccor.git
+[submodule "microcontroller/succor-sketches"]
+	path = microcontroller/succor-sketches
+	url = https://github.com/NinjaTuna007/succor-sketches.git

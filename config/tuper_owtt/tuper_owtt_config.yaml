@@ -1,0 +1,73 @@
+# Default config for the "tuper_owtt" stack (one-way travel time).
+#
+# Unlike tuper_twtt, this stack does NOT talk to the Succorfish
+# modem directly. It talks to a Teensy 4.1 front-end that does the accurate OWTT
+# timing (PPS + OCXO disciplined) and relays to/from the Succorfish.
+#
+# Every value here is just a default; all are overridable as launch arguments.
+
+serial:
+  port: "/dev/ttyACM0"        # Teensy 4.1 enumerates as ACM, not USB
+  port_fallback: "/dev/ttyACM1"
+  baudrate: 115200            # Teensy 4.1 link (new hardware stack)
+
+# How the Teensy should be configured on startup ($Y command).
+teensy:
+  mode: "receiver"            # receiver | transmitter | wire
+  # This node's own modem address, set into the $Y<own_id><mode> command.
+  # Per-node value: set it from the launch file (leader vs follower differ).
+  own_modem_id: "001"
+  # Transmitter-only: the modem id this transmitter waits to hear before it
+  # starts broadcasting. "000" means "go first" (do not wait for anyone).
+  listen_for_modem_id: "000"
+  # Broadcast cadence as a multiple of the PPS, in seconds (1, 2, 3 or 4).
+  broadcast_interval_s: 1
+  config_command_prefix: "$Y"
+  # Terminator appended to commands written to the Teensy ($Y, $G, pass-through).
+  command_terminator: "\r\n"
+  # Mode override: if set to "wire", the node only sends $YW and stays passive
+  # (lets you talk to the Succorfish directly through a switched-off Teensy).
+
+# One-way-travel-time -> range conversion (receiver side).
+owtt:
+  # Line prefix the Teensy uses to report the measured OWTT delta.
+  delta_prefix: "#I"
+  # Constant offset subtracted from the reported delta, in microseconds.
+  # Calibrated against GPS truth in the live setting (lolo <-> floatsam, Askö 2026).
+  offset_us: 79500.0
+  # Fallback sound speed (m/s) used when no live SVS data is available.
+  default_sound_velocity: 1500.0
+  # Optional live sound-velocity source (subscribed if available).
+  sound_velocity_topic: "/lolo/sensors/svs"
+  sound_velocity_msg_type: "svs_interfaces/msg/SVS"
+  sound_velocity_field: "svs"   # field on svs_interfaces/msg/SVS holding m/s
+
+# Follower / receiver settings. (The follower runs on 'lolo'; the leaders do not.)
+follower:
+  leader_gps_msg_type: "GeoPoint"     # GeoPoint | NavSatFix
+  # Two leaders, routed by acoustic modem id -> leader name. Names and modem ids
+  # are overridable from launch arguments. Output topics become
+  # /<name>/smarc/latlon and /<name>/distance.
+  leader1_name: "leader1"
+  leader1_modem_id: "067"
+  leader2_name: "leader2"
+  leader2_modem_id: "069"
+
+# Leader / transmitter settings. Leaders are vehicle-specific and never 'lolo'.
+leader:
+  # Which vehicle this leader runs on. Used to build the subscribed position
+  # topic (/<robot_name>/smarc/latlon). Leave empty to derive it from the
+  # auto-discovered base frame's namespace, or set leader.latlon_topic directly.
+  robot_name: ""
+  latlon_topic: ""
+  # tf frames for the base_link -> modem_link transform. Leave EMPTY to
+  # auto-discover them from the tf tree (the single *base_link / *modem_link
+  # frames); set explicitly only to override.
+  base_frame: ""
+  modem_frame: ""
+  base_link_suffix: "base_link"       # frame name suffix to search for
+  modem_link_suffix: "modem_link"
+  # World/odom frame used to look up vehicle orientation for the lever-arm rotation.
+  world_frame: "map"
+  gps_command_prefix: "$G"            # $G<lat>,<lon>
+  send_period_s: 1.0                  # how often to push the latest GPS to the Teensy
