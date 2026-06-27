@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- The serial link is owned by the succorfish_driver node; set start_driver:=true
+         to bring one up here for a single-node run, else launch it separately. -->
+    <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+    <arg name="driver_profile" default="succorfish" description="Driver profile: succorfish (9600/ttyUSB) or teensy (115200/ttyACM)"/>
+    <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+    <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch.py" if="$(var start_driver)">
+        <arg name="profile" value="$(var driver_profile)"/>
+        <arg name="namespace" value="$(var driver_namespace)"/>
+    </include>
+
+    <arg name="use_sim_time" default="false" description="Use simulation time"/>
+
+    <!-- Robot table as index-aligned, comma-separated lists. -->
+    <arg name="robot_names" default="lolo,sam" description="Comma-separated robot names"/>
+    <arg name="robot_modem_ids" default="7,111" description="Comma-separated modem ids (zero-padded to 3 digits on use)"/>
+    <arg name="robot_topics" default="/relay_lolo/smarc/latlon,/relay_sam/smarc/latlon" description="Comma-separated output topics; a blank entry falls back to /relay_&lt;name&gt;/smarc/latlon"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="smarc_pos_receiver_node"
+          name="smarc_pos_receiver_node"
+          output="screen">
+        <param name="use_sim_time" value="$(var use_sim_time)"/>
+        <param name="robots.names" value="$(var robot_names)" value-sep=","/>
+        <param name="robots.modem_ids" value="$(var robot_modem_ids)" value-sep=","/>
+        <param name="robots.topics" value="$(var robot_topics)" value-sep=","/>
+    </node>
+</launch>

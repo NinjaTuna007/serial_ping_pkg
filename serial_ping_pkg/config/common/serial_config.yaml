@@ -1,0 +1,10 @@
+# Defaults for the general-purpose serial_ping_node (alternating two-leader ping).
+# Every value is overridable via launch args; this file is the bare-`ros2 run` fallback.
+#
+# The physical serial link (port/baud) now lives with the succorfish_driver node,
+# which owns the port; these are behavioural defaults only.
+serial:
+  leader1: "$P001"
+  leader2: "$P002"
+  sound_velocity: 1500.0
+  timeout_threshold: 0.5

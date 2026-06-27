@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Launch arguments for parameters -->
+    <!-- The serial link is owned by the succorfish_driver node; launch it
+         separately (or in the same namespace) so RX/TX/SendCommand line up.
+         For a quick single-node run set start_driver:=true to bring one up here.
+         In multi-node setups leave it false and launch ONE driver separately. -->
+    <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+    <arg name="driver_profile" default="succorfish" description="Driver profile: succorfish (9600/ttyUSB) or teensy (115200/ttyACM)"/>
+    <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+    <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch.py" if="$(var start_driver)">
+        <arg name="profile" value="$(var driver_profile)"/>
+        <arg name="namespace" value="$(var driver_namespace)"/>
+    </include>
+
+    <arg name="leader1_command" default="$P001" description="Leader 1 ping command"/>
+    <arg name="leader2_command" default="$P002" description="Leader 2 ping command"/>
+    <arg name="sound_velocity" default="1500.0" description="Sound velocity in m/s"/>
+    <arg name="timeout_threshold" default="5.0" description="Timeout threshold in seconds"/>
+
+    <!-- Serial Ping Node -->
+    <node pkg="serial_ping_pkg" 
+          exec="serial_ping_node" 
+          name="serial_ping_node" 
+          output="screen">
+        
+        <!-- Set parameters -->
+        <param name="serial.leader1" value="$(var leader1_command)"/>
+        <param name="serial.leader2" value="$(var leader2_command)"/>
+        <param name="serial.sound_velocity" value="$(var sound_velocity)"/>
+        <param name="serial.timeout_threshold" value="$(var timeout_threshold)"/>
+    </node>
+</launch>

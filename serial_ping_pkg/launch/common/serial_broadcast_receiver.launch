@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- The serial link is owned by the succorfish_driver node; launch it
+       separately (or in the same namespace) so the RX topic lines up. Set
+       start_driver:=true to bring one up here for a single-node run. -->
+  <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+  <arg name="driver_profile" default="succorfish" description="Driver profile: succorfish (9600/ttyUSB) or teensy (115200/ttyACM)"/>
+  <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+  <arg name="driver_backend" default="serial" description="Driver I/O backend: serial (real port), test (in-memory modem) or unity (smarcUnity bridge)"/>
+  <arg name="unity_own_modem_id" default="001" description="(unity backend) this modem id stamped on transmitted packets"/>
+  <arg name="unity_write_topic" default="acoustic/write" description="(unity backend) StringStamped topic the driver publishes (Unity transmitter listens)"/>
+  <arg name="unity_read_topic" default="acoustic/read" description="(unity backend) StringStamped topic the driver subscribes (Unity receiver publishes)"/>
+  <arg name="unity_offset_us" default="0.0" description="(unity backend) microseconds added to the derived OWTT delta"/>
+  <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch" if="$(var start_driver)">
+      <arg name="profile" value="$(var driver_profile)"/>
+      <arg name="namespace" value="$(var driver_namespace)"/>
+      <arg name="backend" value="$(var driver_backend)"/>
+      <arg name="unity_own_modem_id" value="$(var unity_own_modem_id)"/>
+      <arg name="unity_write_topic" value="$(var unity_write_topic)"/>
+      <arg name="unity_read_topic" value="$(var unity_read_topic)"/>
+      <arg name="unity_offset_us" value="$(var unity_offset_us)"/>
+  </include>
+
+  <node pkg="serial_ping_pkg"
+        exec="serial_broadcast_receiver"
+        name="serial_broadcast_receiver"
+        output="screen">
+  </node>
+</launch>

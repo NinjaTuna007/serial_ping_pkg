@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Launch arguments for parameters -->
+    <!-- The serial link is owned by the succorfish_driver node; set start_driver:=true
+         to bring one up here for a single-node run, else launch it separately. -->
+    <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+    <arg name="driver_profile" default="succorfish" description="Driver profile: succorfish (9600/ttyUSB) or teensy (115200/ttyACM)"/>
+    <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+    <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch.py" if="$(var start_driver)">
+        <arg name="profile" value="$(var driver_profile)"/>
+        <arg name="namespace" value="$(var driver_namespace)"/>
+    </include>
+
+    <arg name="robot_name" default="lolo" description="Name of the robot who is publishing their position"/>
+
+    <!-- SMARC Position Broadcast Node -->
+    <node pkg="serial_ping_pkg" 
+          exec="smarc_pos_broadcast_node" 
+          name="smarc_pos_broadcast_node" 
+          output="screen">
+        
+        <!-- Set parameters -->
+        <param name="robot_name" value="$(var robot_name)"/>
+    </node>
+</launch>

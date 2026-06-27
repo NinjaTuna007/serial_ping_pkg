@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- The serial link is owned by the succorfish_driver node; set start_driver:=true
+         to bring one up here for a single-node run, else launch it separately. -->
+    <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+    <arg name="driver_profile" default="succorfish" description="Driver profile: succorfish (9600/ttyUSB) or teensy (115200/ttyACM)"/>
+    <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+    <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch.py" if="$(var start_driver)">
+        <arg name="profile" value="$(var driver_profile)"/>
+        <arg name="namespace" value="$(var driver_namespace)"/>
+    </include>
+
+    <arg name="leader_name" default="leader" description="Name of the leader this follower tracks"/>
+    <arg name="leader_gps_topic" default="/$(var leader_name)/smarc/latlon" description="Topic to republish the leader's GPS on"/>
+    <arg name="leader_gps_msg_type" default="GeoPoint" description="GPS message type: GeoPoint | NavSatFix"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="twtt_follower_node"
+          name="twtt_follower_node"
+          output="screen">
+        <param name="leader_name" type="str" value="$(var leader_name)"/>
+        <param name="leader_gps_topic" type="str" value="$(var leader_gps_topic)"/>
+        <param name="leader_gps_msg_type" type="str" value="$(var leader_gps_msg_type)"/>
+    </node>
+</launch>

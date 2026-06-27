@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- The serial link to the Teensy is owned by the succorfish_driver node
+         (use its "teensy" profile); launch it separately or in the same namespace.
+         Set start_driver:=true to bring one up here for a single-node run. -->
+    <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+    <arg name="driver_profile" default="teensy" description="Driver profile: teensy (115200/ttyACM) or succorfish (9600/ttyUSB)"/>
+    <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+    <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch.py" if="$(var start_driver)">
+        <arg name="profile" value="$(var driver_profile)"/>
+        <arg name="namespace" value="$(var driver_namespace)"/>
+    </include>
+
+    <!-- Teensy transmitter configuration ($Y command) -->
+    <arg name="own_modem_id" default="007" description="This leader's own modem address (the id receivers will see)"/>
+    <arg name="listen_for_modem_id" default="000" description="Modem id to wait for before broadcasting (000 = go first)"/>
+    <arg name="broadcast_interval_s" default="4" description="Broadcast cadence in epochs (PPS multiple 1-4)"/>
+
+    <!-- Leader settings (this leader runs on a vehicle; it is never 'lolo') -->
+    <arg name="robot_name" default="" description="Vehicle name; builds /{robot_name}/smarc/latlon (or derived from base frame)"/>
+    <arg name="latlon_topic" default="" description="Position topic (empty -> /{robot_name}/smarc/latlon)"/>
+    <arg name="base_frame" default="" description="Source tf frame (empty -> auto-discover *base_link)"/>
+    <arg name="modem_frame" default="" description="Target tf frame (empty -> auto-discover *modem_link)"/>
+    <arg name="base_link_suffix" default="base_link" description="Frame suffix to search for the base frame"/>
+    <arg name="modem_link_suffix" default="modem_link" description="Frame suffix to search for the modem frame"/>
+    <arg name="world_frame" default="map" description="World/odom frame for orientation lookup"/>
+    <arg name="send_period_s" default="1.0" description="How often to push GPS to the Teensy"/>
+    <arg name="mode" default="transmitter" description="transmitter | wire (wire = passive, Teensy transparent)"/>
+    <arg name="command_terminator" default="&#13;&#10;" description="Terminator appended to Teensy commands"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="owtt_leader_node"
+          name="owtt_leader_node"
+          output="screen">
+        <param name="teensy.own_modem_id" type="str" value="$(var own_modem_id)"/>
+        <param name="teensy.listen_for_modem_id" type="str" value="$(var listen_for_modem_id)"/>
+        <param name="teensy.broadcast_interval_s" value="$(var broadcast_interval_s)"/>
+        <param name="leader.robot_name" type="str" value="$(var robot_name)"/>
+        <param name="leader.latlon_topic" type="str" value="$(var latlon_topic)"/>
+        <param name="leader.base_frame" type="str" value="$(var base_frame)"/>
+        <param name="leader.modem_frame" type="str" value="$(var modem_frame)"/>
+        <param name="leader.base_link_suffix" type="str" value="$(var base_link_suffix)"/>
+        <param name="leader.modem_link_suffix" type="str" value="$(var modem_link_suffix)"/>
+        <param name="leader.world_frame" type="str" value="$(var world_frame)"/>
+        <param name="leader.send_period_s" value="$(var send_period_s)"/>
+        <param name="teensy.mode" type="str" value="$(var mode)"/>
+        <param name="teensy.command_terminator" type="str" value="$(var command_terminator)"/>
+    </node>
+</launch>

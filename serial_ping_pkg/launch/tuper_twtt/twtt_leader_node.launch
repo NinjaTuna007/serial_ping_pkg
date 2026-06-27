@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- The serial link is owned by the succorfish_driver node; set start_driver:=true
+         to bring one up here for a single-node run, else launch it separately. -->
+    <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+    <arg name="driver_profile" default="succorfish" description="Driver profile: succorfish (9600/ttyUSB) or teensy (115200/ttyACM)"/>
+    <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+    <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch.py" if="$(var start_driver)">
+        <arg name="profile" value="$(var driver_profile)"/>
+        <arg name="namespace" value="$(var driver_namespace)"/>
+    </include>
+
+    <arg name="robot_name" default="leader" description="Name for leader robot"/>
+    <arg name="ping_command" default="$P111" description="Ping command string"/>
+    <arg name="sound_velocity" default="1500.0" description="Sound velocity (m/s)"/>
+    <arg name="timeout_threshold" default="2.0" description="Ping response timeout (s)"/>
+    <arg name="timer_period" default="5.0" description="Ping cadence in seconds (master mode only)"/>
+    <arg name="leader_gps_topic" default="/follower/leader2/core/gps" description="Topic to read this leader's GPS from"/>
+    <arg name="leader_gps_msg_type" default="NavSatFix" description="GPS message type: GeoPoint | NavSatFix"/>
+    <arg name="is_slave" default="false" description="If true, ping only after hearing a #B broadcast instead of on a timer"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="twtt_leader_node"
+          name="twtt_leader_node"
+          output="screen">
+        <param name="robot_name" type="str" value="$(var robot_name)"/>
+        <param name="ping_command" type="str" value="$(var ping_command)"/>
+        <param name="sound_velocity" value="$(var sound_velocity)"/>
+        <param name="timeout_threshold" value="$(var timeout_threshold)"/>
+        <param name="timer_period" value="$(var timer_period)"/>
+        <param name="leader_gps_topic" type="str" value="$(var leader_gps_topic)"/>
+        <param name="leader_gps_msg_type" type="str" value="$(var leader_gps_msg_type)"/>
+        <param name="is_slave" value="$(var is_slave)"/>
+    </node>
+</launch>

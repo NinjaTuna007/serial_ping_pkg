@@ -1,0 +1,100 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Node namespace / vehicle name. The driver is brought up in the same
+         namespace, and Unity publishes acoustic topics under /{robot_name}/... -->
+    <arg name="robot_name" default="surface_unit" description="Vehicle name; node + driver namespace. Relative topics resolve as /{robot_name}/..."/>
+
+    <!-- The serial link to the Teensy is owned by the succorfish_driver node
+         (use its "teensy" profile); launch it separately or in the same namespace.
+         Set start_driver:=true to bring one up here for a single-node run. -->
+    <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+    <arg name="driver_profile" default="teensy" description="Driver profile: teensy (115200/ttyACM) or succorfish (9600/ttyUSB)"/>
+    <arg name="driver_namespace" default="$(var robot_name)" description="Namespace for the driver (defaults to robot_name, matching the node)"/>
+    <arg name="driver_backend" default="serial" description="Driver I/O backend: serial (real port), test (in-memory modem) or unity (smarcUnity bridge)"/>
+    <arg name="unity_own_modem_id" default="001" description="(unity backend) this modem id stamped on transmitted packets"/>
+    <arg name="unity_write_topic" default="acoustic/write" description="(unity backend) StringStamped topic the driver publishes (Unity transmitter listens)"/>
+    <arg name="unity_read_topic" default="acoustic/read" description="(unity backend) StringStamped topic the driver subscribes (Unity receiver publishes)"/>
+    <arg name="unity_offset_us" default="0.0" description="(unity backend) microseconds added to the derived OWTT delta"/>
+    <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch" if="$(var start_driver)">
+        <arg name="profile" value="$(var driver_profile)"/>
+        <arg name="namespace" value="$(var driver_namespace)"/>
+        <arg name="backend" value="$(var driver_backend)"/>
+        <arg name="unity_own_modem_id" value="$(var unity_own_modem_id)"/>
+        <arg name="unity_write_topic" value="$(var unity_write_topic)"/>
+        <arg name="unity_read_topic" value="$(var unity_read_topic)"/>
+        <arg name="unity_offset_us" value="$(var unity_offset_us)"/>
+    </include>
+
+    <!-- Teensy receiver config -->
+    <arg name="own_modem_id" default="067" description="This surface unit's own modem address (for $Y)"/>
+    <arg name="mode" default="receiver" description="receiver | wire"/>
+    <arg name="command_terminator" default="&#13;&#10;" description="Terminator appended to Teensy commands"/>
+
+    <!-- OWTT range conversion -->
+    <arg name="owtt_delta_prefix" default="#I" description="Teensy OWTT delta line prefix"/>
+    <arg name="owtt_offset_us" default="771600.0" description="Constant offset subtracted from delta (microseconds)"/>
+    <arg name="min_range_m" default="0.0" description="Drop ranges below this (negatives = bad offset / unsynced clocks)"/>
+    <arg name="max_range_m" default="0.0" description="Drop ranges above this (0 = no upper cap)"/>
+    <arg name="auto_calibrate" default="true" description="Learn offset_us per modem pair from the beacon's seeded GPS"/>
+    <arg name="calib_min_samples" default="5" description="Seeded samples needed to lock the auto offset"/>
+    <arg name="calib_window" default="20" description="Rolling sample window for the running-median offset"/>
+    <arg name="default_sound_velocity" default="1500.0" description="Fallback sound speed (m/s)"/>
+    <arg name="sound_velocity_topic" default="/lolo/sensors/svs" description="Live sound-velocity topic"/>
+    <arg name="sound_velocity_msg_type" default="svs_interfaces/msg/SVS" description="Sound-velocity msg type"/>
+    <arg name="sound_velocity_field" default="svs" description="Field on the SVS msg holding m/s"/>
+
+    <!-- This surface unit + tracked beacon -->
+    <arg name="unit_name" default="surface_unit" description="This surface unit's name (own GPS namespace)"/>
+    <arg name="unit_latlon_topic" default="" description="Override own position topic"/>
+    <arg name="commander" default="false" description="Exactly one unit true: only it transmits acoustic START/STOP"/>
+    <arg name="beacon_name" default="lolo" description="Beacon being tracked"/>
+    <arg name="beacon_modem_id" default="101" description="Beacon modem id; empty = accept any telemetry frame"/>
+    <arg name="start_keyword" default="START" description="Acoustic START keyword (must match the beacon)"/>
+    <arg name="stop_keyword" default="STOP" description="Acoustic STOP keyword (must match the beacon)"/>
+    <arg name="ack_message" default="OK" description="Beacon ack keyword to listen for (must match the beacon)"/>
+
+    <!-- MQTT uplink -->
+    <arg name="mqtt_enabled" default="true" description="Publish range reports to MQTT"/>
+    <arg name="mqtt_host" default="20.240.40.232" description="MQTT broker host (smarc/WARA-PS)"/>
+    <arg name="mqtt_port" default="1884" description="MQTT broker port"/>
+    <arg name="mqtt_username" default="" description="MQTT username (optional)"/>
+    <arg name="mqtt_password" default="" description="MQTT password (optional)"/>
+    <arg name="mqtt_topic_prefix" default="tuper/owtt_beacon" description="MQTT topic prefix (context/subcontext)"/>
+    <arg name="mqtt_qos" default="0" description="MQTT publish QoS"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="owtt_surface_unit_node"
+          name="owtt_surface_unit_node"
+          output="screen"
+          namespace="$(var robot_name)">
+        <param name="owtt.delta_prefix" type="str" value="$(var owtt_delta_prefix)"/>
+        <param name="owtt.offset_us" value="$(var owtt_offset_us)"/>
+        <param name="owtt.min_range_m" value="$(var min_range_m)"/>
+        <param name="owtt.max_range_m" value="$(var max_range_m)"/>
+        <param name="owtt.auto_calibrate" value="$(var auto_calibrate)"/>
+        <param name="owtt.calib_min_samples" value="$(var calib_min_samples)"/>
+        <param name="owtt.calib_window" value="$(var calib_window)"/>
+        <param name="owtt.default_sound_velocity" value="$(var default_sound_velocity)"/>
+        <param name="owtt.sound_velocity_topic" type="str" value="$(var sound_velocity_topic)"/>
+        <param name="owtt.sound_velocity_msg_type" type="str" value="$(var sound_velocity_msg_type)"/>
+        <param name="owtt.sound_velocity_field" type="str" value="$(var sound_velocity_field)"/>
+        <param name="teensy.own_modem_id" type="str" value="$(var own_modem_id)"/>
+        <param name="teensy.mode" type="str" value="$(var mode)"/>
+        <param name="teensy.command_terminator" type="str" value="$(var command_terminator)"/>
+        <param name="surface_unit.name" type="str" value="$(var unit_name)"/>
+        <param name="surface_unit.latlon_topic" type="str" value="$(var unit_latlon_topic)"/>
+        <param name="surface_unit.commander" value="$(var commander)"/>
+        <param name="beacon.name" type="str" value="$(var beacon_name)"/>
+        <param name="beacon.modem_id" type="str" value="$(var beacon_modem_id)"/>
+        <param name="beacon.start_keyword" type="str" value="$(var start_keyword)"/>
+        <param name="beacon.stop_keyword" type="str" value="$(var stop_keyword)"/>
+        <param name="beacon.ack_message" type="str" value="$(var ack_message)"/>
+        <param name="mqtt.enabled" value="$(var mqtt_enabled)"/>
+        <param name="mqtt.host" type="str" value="$(var mqtt_host)"/>
+        <param name="mqtt.port" value="$(var mqtt_port)"/>
+        <param name="mqtt.username" type="str" value="$(var mqtt_username)"/>
+        <param name="mqtt.password" type="str" value="$(var mqtt_password)"/>
+        <param name="mqtt.topic_prefix" type="str" value="$(var mqtt_topic_prefix)"/>
+        <param name="mqtt.qos" value="$(var mqtt_qos)"/>
+    </node>
+</launch>

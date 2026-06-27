@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>serial_ping_pkg</name>
+  <version>0.0.0</version>
+  <description>A comprehensive ROS 2 package for underwater acoustic communication and ranging using Succorfish Delphis modems. Provides nodes for acoustic pinging, distance measurement, position broadcasting, and autonomous leader-follower operations in underwater robotics applications.</description>
+  <maintainer email="sdup@kth.se">Shekhar Devm Upadhyay</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>geographic_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>succorfish_msgs</depend>
+  <exec_depend>succorfish_driver</exec_depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <exec_depend>svs_interfaces</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  
+  <exec_depend>pyyaml</exec_depend>
+  <exec_depend>python3-pandas</exec_depend>
+  <exec_depend>python3-paho-mqtt</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

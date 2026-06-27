@@ -1,0 +1,11 @@
+# Configuration for the single target ping node.
+# The physical serial link (port/baud) now lives with the succorfish_driver node.
+serial:
+  timeout_threshold: 5.0
+
+single_target_ping:
+  ping_command: "$P002"
+  timer_period: 1.0  # ping once per second
+  robot_name: "stick"
+  sound_velocity: 1500.0
+  distance_topic_suffix: "distance_to_usv"  # will create /{robot_name}/{distance_topic_suffix}

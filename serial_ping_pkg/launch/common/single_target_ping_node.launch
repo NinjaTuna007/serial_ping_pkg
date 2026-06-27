@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Launch arguments for parameters -->
+    <arg name="robot_name" default="stick" description="Name of the robot"/>
+    <arg name="ping_command" default="$P002" description="Ping command to send"/>
+    <arg name="timer_period" default="1.0" description="Ping interval in seconds"/>
+    <arg name="distance_topic_suffix" default="distance_to_usv" description="Suffix for distance topic (/{robot_name}/{suffix})"/>
+    <!-- The serial link is owned by the succorfish_driver node; set start_driver:=true
+         to bring one up here for a single-node run, else launch it separately. -->
+    <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
+    <arg name="driver_profile" default="succorfish" description="Driver profile: succorfish (9600/ttyUSB) or teensy (115200/ttyACM)"/>
+    <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+    <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch.py" if="$(var start_driver)">
+        <arg name="profile" value="$(var driver_profile)"/>
+        <arg name="namespace" value="$(var driver_namespace)"/>
+    </include>
+    <arg name="sound_velocity" default="1500.0" description="Sound velocity in m/s"/>
+    <arg name="timeout_threshold" default="5.0" description="Timeout threshold in seconds"/>
+
+    <!-- Single Target Ping Node -->
+    <node pkg="serial_ping_pkg" 
+          exec="single_target_ping_node" 
+          name="single_target_ping_node" 
+          output="screen">
+        
+        <!-- Set parameters -->
+        <param name="robot_name" value="$(var robot_name)"/>
+        <param name="ping_command" value="$(var ping_command)"/>
+        <param name="timer_period" value="$(var timer_period)"/>
+        <param name="distance_topic_suffix" value="$(var distance_topic_suffix)"/>
+        <param name="sound_velocity" value="$(var sound_velocity)"/>
+        <param name="serial.timeout_threshold" value="$(var timeout_threshold)"/>
+    </node>
+</launch>
