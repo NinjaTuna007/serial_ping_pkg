@@ -326,7 +326,7 @@ ros2 launch serial_ping_pkg owtt_leader_node.launch \
 ### Follower (receiver) — every argument, shown at its default
 
 ```bash
-ros2 launch serial_ping_pkg owtt_follower_node.launch \
+ros2 launch serial_ping_pkg owtt_follower_node.launch.py \
     owtt_delta_prefix:=#I \
     owtt_offset_us:=0.0 \
     default_sound_velocity:=1500.0 \
@@ -370,7 +370,7 @@ ros2 launch serial_ping_pkg owtt_follower_node.launch \
 ros2 launch succorfish_driver succorfish_driver.launch profile:=teensy
 
 # Bare defaults (driver on its teensy profile)
-ros2 launch serial_ping_pkg owtt_follower_node.launch
+ros2 launch serial_ping_pkg owtt_follower_node.launch.py
 ros2 launch serial_ping_pkg owtt_leader_node.launch robot_name:=leader1
 
 # Real bring-up over a non-default port (the config file owns port/baud now;
@@ -388,16 +388,16 @@ ros2 launch serial_ping_pkg owtt_leader_node.launch \
     robot_name:=sam own_modem_id:=011 listen_for_modem_id:=007
 
 # Follower with a calibrated OWTT offset and a custom leader-id map
-ros2 launch serial_ping_pkg owtt_follower_node.launch \
+ros2 launch serial_ping_pkg owtt_follower_node.launch.py \
     owtt_offset_us:=12345.0 \
     leader1_name:=sam leader1_modem_id:=011 \
     leader2_name:=leader1 leader2_modem_id:=007
 
 # Follower without a live SVS feed (force the 1500 m/s default)
-ros2 launch serial_ping_pkg owtt_follower_node.launch sound_velocity_topic:=''
+ros2 launch serial_ping_pkg owtt_follower_node.launch.py sound_velocity_topic:=''
 
 # "Switch off" the Teensy and talk to the modem transparently (either node)
-ros2 launch serial_ping_pkg owtt_follower_node.launch mode:=wire
+ros2 launch serial_ping_pkg owtt_follower_node.launch.py mode:=wire
 ros2 launch serial_ping_pkg owtt_leader_node.launch mode:=wire
 ```
 

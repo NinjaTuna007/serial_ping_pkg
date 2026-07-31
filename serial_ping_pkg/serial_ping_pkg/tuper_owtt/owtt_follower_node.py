@@ -69,6 +69,9 @@ class OwttFollowerNode(WireSafeSerialNode):
         self.declare_parameter('teensy.own_modem_id', teensy_cfg.get('own_modem_id', '101'), id_desc)
         self.declare_parameter('teensy.command_terminator', teensy_cfg.get('command_terminator', '\r\n'))
         self.declare_parameter('teensy.mode', teensy_cfg.get('mode', 'receiver'))
+        # Holdover experiment: seconds since Teensy boot after which it stops
+        # accepting PPS and free-runs on the OCXO. 0 = never (normal sticks).
+        self.declare_parameter('teensy.ignore_pps_after_s', teensy_cfg.get('ignore_pps_after_s', 0))
 
         self.delta_prefix = self.get_parameter('owtt.delta_prefix').get_parameter_value().string_value
         self.offset_us = self.get_parameter('owtt.offset_us').get_parameter_value().double_value
@@ -84,6 +87,7 @@ class OwttFollowerNode(WireSafeSerialNode):
         self.own_modem_id = ti.normalize_modem_id(self.get_parameter('teensy.own_modem_id').value)
         self.command_terminator = self.get_parameter('teensy.command_terminator').get_parameter_value().string_value
         self.mode = self.get_parameter('teensy.mode').get_parameter_value().string_value.lower()
+        self.ignore_pps_after_s = self.get_parameter('teensy.ignore_pps_after_s').get_parameter_value().integer_value
 
         # Latest sound velocity (falls back to default until an SVS msg arrives).
         self.sound_velocity = self.default_sound_velocity
@@ -106,6 +110,16 @@ class OwttFollowerNode(WireSafeSerialNode):
 
         # Put the Teensy into receiver mode.
         self.send_command(ti.build_config_command(ti.TeensyMode.RECEIVER, self.own_modem_id))
+
+        # Holdover experiment (stick 4 field setup): tell the Teensy to drop
+        # real PPS after N seconds of uptime and free-run on the OCXO. $Z
+        # commands are accepted even while the $Y config is still pending, so
+        # this can go out immediately after the config command.
+        if self.ignore_pps_after_s > 0:
+            self.send_command(f'$ZIGNOREPPSAFTER={self.ignore_pps_after_s}')
+            self.get_logger().warn(
+                f"Holdover experiment active: Teensy will ignore PPS after "
+                f"{self.ignore_pps_after_s} s of uptime (OCXO free-run).")
 
         # Resolve leader GPS message type.
         self.LeaderMsgType = self._resolve_gps_type(self.leader_gps_msg_type)

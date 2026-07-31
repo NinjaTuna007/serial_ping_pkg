@@ -82,7 +82,13 @@ class WireSafeSerialNode(Node):
 
     def send_command(self, cmd):
         """Publish a command to the driver (it appends the terminator)."""
-        self.get_logger().info(f"-> Teensy: {cmd!r}")
+        if cmd.startswith('$G'):
+            # $G pushes can run at tens of Hz; keep one INFO line per second
+            # and the rest at DEBUG so the log stays readable.
+            self.get_logger().info(f"-> Teensy: {cmd!r}", throttle_duration_sec=1.0)
+            self.get_logger().debug(f"-> Teensy: {cmd!r}")
+        else:
+            self.get_logger().info(f"-> Teensy: {cmd!r}")
         if self.driver is not None:
             self.driver.write(cmd)
 

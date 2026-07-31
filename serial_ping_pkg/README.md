@@ -160,7 +160,7 @@ ros2 launch serial_ping_pkg twtt_follower_node.launch
 
 # OWTT leader / follower (tuper_owtt, Teensy front-end)
 ros2 launch serial_ping_pkg owtt_leader_node.launch
-ros2 launch serial_ping_pkg owtt_follower_node.launch
+ros2 launch serial_ping_pkg owtt_follower_node.launch.py
 ```
 
 ### No hardware? Run against a fake or simulated modem
