@@ -91,12 +91,6 @@ class OwttLeaderNode(WireSafeSerialNode):
         if not self.latlon_topic and self.robot_name:
             self.latlon_topic = f"/{self.robot_name}/smarc/latlon"
 
-        # The Teensy applies the config only after the modem confirms with
-        # #A<own_id> (forwarded to the host). Hold off on $G until we see it.
-        # (Set before connecting so an early inbound line can't race the attr.)
-        self.config_confirmed = False
-        self._expected_ack = "#A" + str(self.own_modem_id).zfill(3)
-
         # Connect to the modem/Teensy via succorfish_driver (no direct serial).
         self.connect_driver(on_line=self._on_serial_line, wait_timeout=5.0)
 
@@ -109,8 +103,8 @@ class OwttLeaderNode(WireSafeSerialNode):
             self.get_logger().warn("Started in WIRE mode: Teensy is transparent, leader is passive.")
             return
 
-        # Put the Teensy into transmitter mode.
-        self.send_command(ti.build_config_command(
+        # Put the Teensy into transmitter mode; gate $G on #Y,OK (not merely #A).
+        self.arm_config_retry(ti.build_config_command(
             ti.TeensyMode.TRANSMITTER,
             self.own_modem_id,
             listen_for_modem_id=self.listen_for_modem_id,
@@ -237,20 +231,18 @@ class OwttLeaderNode(WireSafeSerialNode):
     # ------------------------------------------------------------------ runtime
 
     def _on_serial_line(self, line):
-        """Flag config as confirmed when the modem's #A<own_id> is seen."""
+        """Confirm mode apply on #Y,OK; #A alone is not enough."""
         line = line.strip()
-        if not getattr(self, 'config_confirmed', True) and line.startswith(self._expected_ack):
-            self.config_confirmed = True
-            self.get_logger().info(f"Teensy config confirmed: {line}")
+        self.handle_config_line(line)
 
     def push_gps_to_teensy(self):
-        # Inbound #A<own_id> config confirmation arrives via _on_serial_line.
+        # Inbound #Y,OK config confirmation arrives via _on_serial_line.
         # Retry frame discovery / subscription until the tf tree + topic are ready.
         self._resolve_frames()
         self._ensure_subscription()
         if not self.config_confirmed:
             self.get_logger().info(
-                f"Waiting for Teensy config confirmation ({self._expected_ack}) "
+                f"Waiting for Teensy config confirmation ({self._expected_ok_prefix}…) "
                 "before sending GPS...", throttle_duration_sec=5.0)
             return
         if self.latest_position is None:

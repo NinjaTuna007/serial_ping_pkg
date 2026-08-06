@@ -7,7 +7,7 @@ Two layers:
 * pty-based *full-stack* integration tests: the nodes no longer open a serial
   port, so these launch the ``succorfish_driver`` node bound to a pseudo-serial
   port AND the owtt node, and verify the wire-mode-on-exit guarantee and the
-  leader's ``#A`` config gating travel correctly over the driver's ROS interface
+  leader's ``#Y,OK`` config gating travel correctly over the driver's ROS interface
   (TX/RX/SendCommand). They are skipped automatically if the packages are not
   built/sourced.
 """
@@ -70,6 +70,53 @@ def test_parse_broadcast_latlon():
     data = '59.12345678,18.87654321'
     frame = '#B007%02d%s' % (len(data), data)
     assert ti.parse_broadcast(frame) == ('007', 59.12345678, 18.87654321)
+
+
+def test_parse_broadcast_timestamped_gps():
+    """stick-v1 envelope is unwrapped before lat/lon are read."""
+    app = '59.34837037,18.07220699'
+    payload = f'T04|003A|P|{app}'
+    frame = f'#B002{len(payload):02d}{payload}'
+    assert ti.parse_broadcast(frame) == ('002', 59.34837037, 18.07220699)
+    modem_id, data = ti.parse_broadcast_payload(frame)
+    assert modem_id == '002'
+    assert data == app
+
+
+def test_unwrap_timestamp_envelope_meta():
+    """Envelope meta is available; TEL: and legacy GPS are left alone."""
+    payload = 'T04|003A|P|59.1,18.2'
+    meta, app = ti.unwrap_timestamp_envelope(payload)
+    assert app == '59.1,18.2'
+    assert meta == {
+        'tx_ss': 4,
+        'tx_fraction_us': 0,
+        'tx_time_us': 4_000_000,
+        'sequence': 0x3A,
+        'timing_mode': 'P',
+        'holdover_age_s': 0,
+    }
+    assert ti.unwrap_timestamp_envelope('59.1,18.2') == (None, '59.1,18.2')
+    assert ti.unwrap_timestamp_envelope('TEL:P1,2') == (None, 'TEL:P1,2')
+
+
+def test_unwrap_timestamp_envelope_holdover():
+    """holdover field present only when TX is free-running."""
+    payload = 'T04|003A|H|0000000B|59.1,18.2'
+    meta, app = ti.unwrap_timestamp_envelope(payload)
+    assert app == '59.1,18.2'
+    assert meta['timing_mode'] == 'H'
+    assert meta['holdover_age_s'] == 0xB
+    assert meta['tx_ss'] == 4
+
+
+def test_parse_broadcast_timestamped_telemetry_not_gps():
+    """TEL: frames (even enveloped) are not treated as lat/lon broadcasts."""
+    app = 'TEL:P58.8,17.6;D1.0'
+    payload = f'T04|0001|H|{app}'
+    frame = f'#B101{len(payload):02d}{payload}'
+    assert ti.parse_broadcast(frame) is None
+    assert ti.parse_broadcast_payload(frame) == ('101', app)
 
 
 def test_parse_broadcast_bad_length():
@@ -181,10 +228,10 @@ def test_owtt_follower_publishes_position_and_range():
 @pytest.mark.skipif(not DRIVER_AVAILABLE or exe('owtt_leader_node') is None,
                     reason="serial_ping_pkg / succorfish_driver not built/sourced")
 def test_leader_waits_for_ack():
-    """The leader withholds $G until it sees #A<own_id>, then proceeds.
+    """The leader withholds $G until it sees #Y,OK,<id>, then proceeds.
 
     Full-stack: the leader's config goes leader -> driver -> pty, and the ack we
-    inject on the pty flows pty -> driver RX -> leader.
+    inject on the pty flows pty -> driver RX -> leader. A bare #A is not enough.
     """
     st = Stack(profile='teensy').start_driver()
     st.start_node(
@@ -194,12 +241,17 @@ def test_leader_waits_for_ack():
          '-p', 'leader.send_period_s:=0.5'])
     assert st.fake.wait_for_command('$Y042T0004s', timeout=6.0), \
         f"never saw transmitter config; got {st.fake.commands()!r}"
-    # Before the ack, the leader must NOT have started sending GPS ($G) frames.
+    # Before the mode-apply OK, the leader must NOT have started sending GPS.
     time.sleep(1.5)
     before_ack = st.fake.commands()
-    st.fake.inject('#A042')
-    time.sleep(1.5)  # let the leader process the ack and start
+    st.fake.inject('#A042')  # modem address only — must not release $G
+    time.sleep(1.0)
+    mid = st.fake.commands()
+    assert not any(c.startswith('$G') for c in mid), \
+        f"leader sent $G after #A alone: {mid!r}"
+    st.fake.inject('#Y,OK,042,T,000,4')
+    time.sleep(1.5)  # let the leader process the OK and start
     out, _ = st.stop()
     assert not any(c.startswith('$G') for c in before_ack), \
         f"leader sent $G before the ack: {before_ack!r}"
-    assert 'Teensy config confirmed: #A042' in out
+    assert 'Teensy config confirmed: #Y,OK,042,T,000,4' in out

@@ -27,10 +27,16 @@
     <arg name="send_period_s" default="1.0" description="How often to push GPS to the Teensy"/>
     <arg name="mode" default="transmitter" description="transmitter | wire (wire = passive, Teensy transparent)"/>
     <arg name="command_terminator" default="&#13;&#10;" description="Terminator appended to Teensy commands"/>
+    <!-- Defaults to robot_name so two sticks on one computer isolate /succorfish/*
+         without a second bringup arg. Override only when graph placement must
+         differ from vehicle identity. -->
+    <arg name="namespace" default="$(var robot_name)"
+         description="ROS namespace shared with succorfish_driver (default: robot_name)"/>
 
     <node pkg="serial_ping_pkg"
           exec="owtt_leader_node"
           name="owtt_leader_node"
+          namespace="$(var namespace)"
           output="screen">
         <param name="teensy.own_modem_id" type="str" value="$(var own_modem_id)"/>
         <param name="teensy.listen_for_modem_id" type="str" value="$(var listen_for_modem_id)"/>

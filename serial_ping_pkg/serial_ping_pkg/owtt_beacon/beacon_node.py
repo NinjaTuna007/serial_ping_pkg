@@ -25,7 +25,7 @@ beacon's in-situ sound velocity instead of a frozen default.
 Broadcasting depth lets the inference node turn the surface units' *slant*
 ranges into horizontal ranges (the beacon may be submerged).
 
-Like the OWTT leader, it waits for the Teensy's ``#A<own_id>`` config
+Like the OWTT leader, it waits for the Teensy's ``#Y,OK,<own_id>`` mode-apply
 confirmation before sending, and always resets the Teensy to WIRE mode on exit.
 
 Command channel: the beacon does NOT broadcast until it hears a ``START``
@@ -167,11 +167,7 @@ class BeaconNode(WireSafeSerialNode):
         self.latest_speed = None      # float
         self.latest_bt = None         # str
 
-        # Hold off on $K telemetry until the modem confirms the config (#A<own_id>).
-        # (Set before connecting so an early inbound line can't race the attr.)
-        self.config_confirmed = False
-        self._expected_ack = "#A" + str(self.own_modem_id).zfill(3)
-
+        # Hold off on $K telemetry until the Teensy reports #Y,OK (mode applied).
         # Connect to the modem/Teensy via succorfish_driver (no direct serial).
         self.connect_driver(on_line=self._on_serial_line, wait_timeout=5.0)
 
@@ -183,8 +179,8 @@ class BeaconNode(WireSafeSerialNode):
             self.get_logger().warn("Started in WIRE mode: Teensy is transparent, beacon is passive.")
             return
 
-        # Configure the Teensy as a transmitter.
-        self.send_command(ti.build_config_command(
+        # Configure the Teensy as a transmitter; retry until #Y,OK.
+        self.arm_config_retry(ti.build_config_command(
             ti.TeensyMode.TRANSMITTER,
             self.own_modem_id,
             listen_for_modem_id=self.listen_for_modem_id,
@@ -290,9 +286,7 @@ class BeaconNode(WireSafeSerialNode):
             self.handle_line(line)
 
     def handle_line(self, line):
-        if not self.config_confirmed and line.startswith(self._expected_ack):
-            self.config_confirmed = True
-            self.get_logger().info(f"Teensy config confirmed: {line}")
+        if self.handle_config_line(line):
             return
 
         broadcast = ti.parse_broadcast_payload(line)
@@ -347,7 +341,7 @@ class BeaconNode(WireSafeSerialNode):
             return
         if not self.config_confirmed:
             self.get_logger().info(
-                f"Waiting for Teensy config confirmation ({self._expected_ack}) "
+                f"Waiting for Teensy config confirmation ({self._expected_ok_prefix}…) "
                 "before sending telemetry...", throttle_duration_sec=5.0)
             return
 

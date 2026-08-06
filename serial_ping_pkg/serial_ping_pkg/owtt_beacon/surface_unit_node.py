@@ -164,7 +164,8 @@ class SurfaceUnitNode(WireSafeSerialNode):
             self.get_logger().warn("Started in WIRE mode: Teensy is transparent, surface unit is passive.")
             return
 
-        self.send_command(ti.build_config_command(ti.TeensyMode.RECEIVER, self.own_modem_id))
+        self.arm_config_retry(
+            ti.build_config_command(ti.TeensyMode.RECEIVER, self.own_modem_id))
 
         # --- ROS publishers ---
         self.range_pub = self.create_publisher(
@@ -290,11 +291,14 @@ class SurfaceUnitNode(WireSafeSerialNode):
     # ------------------------------------------------------------------ runtime
 
     def _on_serial_line(self, line):
+        line = line.strip()
+        if not line:
+            return
+        if self.handle_config_line(line):
+            return
         if not getattr(self, '_ready', False):
             return
-        line = line.strip()
-        if line:
-            self.handle_line(line)
+        self.handle_line(line)
 
     def handle_line(self, line):
         broadcast = ti.parse_broadcast_payload(line)
@@ -323,10 +327,6 @@ class SurfaceUnitNode(WireSafeSerialNode):
         delta_us = ti.parse_owtt_delta(line, self.delta_prefix)
         if delta_us is not None:
             self._handle_delta(delta_us)
-            return
-
-        if line.startswith('#A'):
-            self.get_logger().info(f"Teensy config confirmed: {line}")
             return
 
         self.get_logger().debug(f"<- Teensy (unhandled): {line}")

@@ -51,6 +51,11 @@ class OwttFollowerNode(WireSafeSerialNode):
         self.declare_parameter('owtt.sound_velocity_topic', owtt_cfg.get('sound_velocity_topic', '/lolo/sensors/svs'))
         self.declare_parameter('owtt.sound_velocity_msg_type', owtt_cfg.get('sound_velocity_msg_type', 'svs_interfaces/msg/SVS'))
         self.declare_parameter('owtt.sound_velocity_field', owtt_cfg.get('sound_velocity_field', 'svs'))
+        # Physical validity gate: acoustic ranges are strictly positive and
+        # bounded by modem reach. Anything outside is a timing transient or
+        # an RxS/decode mispair on the Teensy — drop it. Default matches the
+        # firmware's 3 s TOF ceiling at nominal 1500 m/s sound speed.
+        self.declare_parameter('owtt.max_range_m', owtt_cfg.get('max_range_m', 4500.0))
 
         # Modem ids must tolerate however ros2 launch coerced the override
         # (str '069', int 69, or float 69.0). Declare them dynamically typed and
@@ -75,6 +80,7 @@ class OwttFollowerNode(WireSafeSerialNode):
 
         self.delta_prefix = self.get_parameter('owtt.delta_prefix').get_parameter_value().string_value
         self.offset_us = self.get_parameter('owtt.offset_us').get_parameter_value().double_value
+        self.max_range_m = self.get_parameter('owtt.max_range_m').get_parameter_value().double_value
         self.default_sound_velocity = self.get_parameter('owtt.default_sound_velocity').get_parameter_value().double_value
         self.sound_velocity_topic = self.get_parameter('owtt.sound_velocity_topic').get_parameter_value().string_value
         self.sound_velocity_msg_type = self.get_parameter('owtt.sound_velocity_msg_type').get_parameter_value().string_value
@@ -92,8 +98,8 @@ class OwttFollowerNode(WireSafeSerialNode):
         # Latest sound velocity (falls back to default until an SVS msg arrives).
         self.sound_velocity = self.default_sound_velocity
 
-        # Lines are ignored until the node is fully initialised (guards against an
-        # inbound line racing the robots/state setup below).
+        # Lines other than config ACKs are ignored until fully initialised
+        # (guards against an inbound broadcast racing robots/state setup).
         self._ready = False
 
         # Connect to the modem/Teensy via succorfish_driver (no direct serial).
@@ -108,8 +114,9 @@ class OwttFollowerNode(WireSafeSerialNode):
             self.get_logger().warn("Started in WIRE mode: Teensy is transparent, follower is passive.")
             return
 
-        # Put the Teensy into receiver mode.
-        self.send_command(ti.build_config_command(ti.TeensyMode.RECEIVER, self.own_modem_id))
+        # Put the Teensy into receiver mode; retry until #Y,OK confirms apply.
+        self.arm_config_retry(
+            ti.build_config_command(ti.TeensyMode.RECEIVER, self.own_modem_id))
 
         # Holdover experiment (stick 4 field setup): tell the Teensy to drop
         # real PPS after N seconds of uptime and free-run on the OCXO. $Z
@@ -181,11 +188,15 @@ class OwttFollowerNode(WireSafeSerialNode):
     # ------------------------------------------------------------------ runtime
 
     def _on_serial_line(self, line):
+        line = line.strip()
+        if not line:
+            return
+        # Config ACKs must be handled even before _ready (fast #Y,OK during init).
+        if self.handle_config_line(line):
+            return
         if not getattr(self, '_ready', False):
             return
-        line = line.strip()
-        if line:
-            self.handle_line(line)
+        self.handle_line(line)
 
     def handle_line(self, line):
         # Leader position broadcast.
@@ -196,15 +207,10 @@ class OwttFollowerNode(WireSafeSerialNode):
             self.publish_position(modem_id, lat, lon)
             return
 
-        # OWTT delta -> range, paired with the most recent broadcast.
+        # Absolute #I TOF -> range, paired with the most recent broadcast.
         delta_us = ti.parse_owtt_delta(line, self.delta_prefix)
         if delta_us is not None:
             self.publish_range(delta_us)
-            return
-
-        # Teensy/modem config confirmation (forwarded to the host).
-        if line.startswith('#A'):
-            self.get_logger().info(f"Teensy config confirmed: {line}")
             return
 
         # Anything else (e.g. classic Succorfish responses) is just logged.
@@ -263,6 +269,11 @@ class OwttFollowerNode(WireSafeSerialNode):
                 f"[{robot['name']}] range suppressed: leader position is frozen/stale.")
             return
         rng = ti.delta_to_range_m(delta_us, self.offset_us, self.sound_velocity)
+        if not (0.0 < rng <= self.max_range_m):
+            self.get_logger().warn(
+                f"[{robot['name']}] dropping unphysical range {rng:.3f} m "
+                f"(delta={delta_us} us) — timing transient on TX or RX stick.")
+            return
         msg = Float32()
         msg.data = float(rng)
         robot['dist_pub'].publish(msg)

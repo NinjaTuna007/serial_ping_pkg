@@ -77,6 +77,17 @@ def test_strip_marker_present_and_absent():
     assert strip_marker("58.1,18.2") is None
 
 
+def test_strip_marker_after_envelope_unwrap():
+    """Surface units see TEL: after parse_broadcast_payload unwraps the envelope."""
+    from serial_ping_pkg.tuper_owtt import teensy_interface as ti
+    app = 'TEL:P58.8,17.6'
+    payload = f'T04|0001|P|{app}'
+    frame = f'#B101{len(payload):02d}{payload}'
+    modem_id, data = ti.parse_broadcast_payload(frame)
+    assert modem_id == '101'
+    assert strip_marker(data) == 'P58.8,17.6'
+
+
 def test_payload_budget_drops_bt_keeps_position():
     """When over budget the free-text bt is sacrificed; position is preserved."""
     payload = encode_telemetry(
@@ -185,7 +196,7 @@ def test_meas_time_fallback_order():
 # Full-stack pty integration (Teensy OWTT profile)                           #
 #                                                                             #
 # fake Teensy <--pty--> succorfish_driver <--ROS--> beacon/surface node.     #
-# The fake Teensy ACKs $Y config with #A<id>; tests then drive the START/OK   #
+# The fake Teensy ACKs $Y config with #A<id> + #Y,OK; tests then drive START/OK #
 # command channel and the telemetry+#I range path.                           #
 # --------------------------------------------------------------------------- #
 

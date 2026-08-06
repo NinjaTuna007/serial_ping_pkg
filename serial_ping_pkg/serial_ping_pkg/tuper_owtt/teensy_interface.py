@@ -86,11 +86,94 @@ def build_gps_command(lat, lon, prefix="$G"):
 
 
 # Marker that the Teensy prepends to a telemetry broadcast payload. A received
-# broadcast whose data starts with this marker is a telemetry frame (and the
-# Teensy still emits an #I timing line for it, so it is range-able). A
-# multi-char marker (vs a bare 'T') avoids mistaking ordinary broadcast data
-# for telemetry.
+# broadcast whose *application* data starts with this marker is a telemetry
+# frame (and the Teensy still emits an #I timing line for it, so it is
+# range-able). A multi-char marker (vs a bare 'T') avoids mistaking ordinary
+# broadcast data for telemetry — and also avoids colliding with the stick-v1
+# absolute-time envelope which likewise starts with ``T``.
 TELEMETRY_MARKER = "TEL:"
+
+# stick-v1 / LOLO_ver3 on-air envelope (before the application payload):
+#   T<ss>|<seq:hex>|<P|H|W>[|<holdover_age_s:hex>]|<application>
+# ss is the TX UTC time-of-minute (seconds, 0-59); broadcasts are PPS-aligned
+# so the sub-second fraction is always ~0 and is omitted. Full unix seconds are
+# redundant because propagation is only a few seconds; the Teensy resolves the
+# minute against its own UTC. holdover is emitted only when non-zero (TX
+# free-running); locked transmitters omit the field. Application (``lat,lon``
+# or ``TEL:…``) follows. ROS ranging uses Teensy ``#I`` (absolute OWTT), so
+# nodes unwrap this and ignore the TX stamp unless a caller asks.
+
+
+def unwrap_timestamp_envelope(data):
+    """Strip a stick-v1 TX timestamp envelope if present.
+
+    Returns ``(meta, application)``. When ``data`` is not enveloped (legacy
+    bare ``lat,lon``, ``TEL:…``, ``START``, …), ``meta`` is ``None`` and
+    ``application`` is ``data`` unchanged.
+
+    ``meta`` keys: ``tx_ss`` (int, 0-59), ``tx_fraction_us`` (int, always 0 for
+    the compact form), ``tx_time_us`` (``tx_ss*1e6``), ``sequence``,
+    ``timing_mode``, ``holdover_age_s`` (0 when the field is omitted).
+    """
+    if not data or data[0] != 'T' or data.startswith(TELEMETRY_MARKER):
+        return None, data
+
+    # T<ss>|<seq:hex>|<P|H|W>[|<holdover:hex>]|<application>
+    i = 1
+    while i < len(data) and data[i].isdigit():
+        i += 1
+    if i == 1 or i >= len(data) or data[i] != '|':
+        return None, data
+    try:
+        tx_ss = int(data[1:i])
+    except ValueError:
+        return None, data
+    if tx_ss > 59:
+        return None, data
+
+    rest = data[i + 1:]
+    j = rest.find('|')
+    if j < 0:
+        return None, data
+    try:
+        sequence = int(rest[:j], 16)
+    except ValueError:
+        return None, data
+    if sequence > 0xFFFF:
+        return None, data
+
+    rest = rest[j + 1:]
+    if len(rest) < 2 or rest[0] not in ('P', 'H', 'W') or rest[1] != '|':
+        return None, data
+    timing_mode = rest[0]
+    rest = rest[2:]
+
+    # Optional holdover field: only present when TX timing_mode is H.
+    holdover_age_s = 0
+    if timing_mode == 'H':
+        k = rest.find('|')
+        if k < 0:
+            return None, data
+        try:
+            holdover_age_s = int(rest[:k], 16)
+        except ValueError:
+            return None, data
+        application = rest[k + 1:]
+    else:
+        application = rest
+
+    if not application:
+        return None, data
+
+    meta = {
+        'tx_ss': tx_ss,
+        'tx_fraction_us': 0,
+        'tx_time_us': tx_ss * 1_000_000,
+        'sequence': sequence,
+        'timing_mode': timing_mode,
+        'holdover_age_s': holdover_age_s,
+    }
+    return meta, application
 
 
 def build_telemetry_command(payload, prefix="$K"):
@@ -121,12 +204,12 @@ def build_broadcast_command(data, prefix="$B"):
 
 
 def parse_broadcast_payload(line, prefix="#B"):
-    """Parse a Succorfish broadcast frame into ``(modem_id, data)``.
+    """Parse a Succorfish broadcast frame into ``(modem_id, application_data)``.
 
-    Format: ``#B<modem_id(3)><num_chars(2)><data>``. Unlike ``parse_broadcast``
-    (which assumes ``data`` is ``lat,lon``), this returns the raw ``data``
-    string so the caller can decide whether it is GPS coordinates or a
-    telemetry frame (``data[0] == 'T'``).
+    Format: ``#B<modem_id(3)><num_chars(2)><data>``. ``data`` may be a stick-v1
+    timestamp envelope; this returns the *application* payload after unwrapping
+    (legacy ``lat,lon``, ``TEL:…``, control words, …). The raw on-air bytes
+    remain on ``succorfish/rx`` for anything that needs the envelope.
 
     Returns ``None`` if the line is not a parseable broadcast.
     """
@@ -142,7 +225,8 @@ def parse_broadcast_payload(line, prefix="#B"):
     data = line[7:7 + num_chars]
     if len(data) != num_chars:
         return None
-    return modem_id, data
+    _, application = unwrap_timestamp_envelope(data)
+    return modem_id, application
 
 
 def parse_owtt_delta(line, prefix="#I"):
@@ -150,7 +234,9 @@ def parse_owtt_delta(line, prefix="#I"):
 
     Returns ``None`` if the line is not an OWTT-delta line.
 
-    TODO(plan): confirm the numeric format of the delta payload.
+    Stick-v1 emits ``#I`` as the absolute TX→RX one-way travel time (can
+    exceed 1 s for long ranges). The local PPS residual, when needed, is the
+    ``#J`` second field or the ``#OWTT`` ``delta_us`` column.
     """
     if not line.startswith(prefix):
         return None
@@ -169,25 +255,19 @@ def delta_to_range_m(delta_us, offset_us, sound_velocity_mps):
 
 
 def parse_broadcast(line, prefix="#B"):
-    """Parse a Succorfish broadcast frame relayed by the Teensy.
+    """Parse a GPS lat/lon Succorfish broadcast relayed by the Teensy.
 
-    Format: ``#B<modem_id(3)><num_chars(2)><data>`` where, in the OWTT scheme,
-    ``data`` is ``lat,lon``.
+    Format: ``#B<modem_id(3)><num_chars(2)><data>`` where application ``data``
+    is ``lat,lon`` (optionally inside a stick-v1 timestamp envelope).
 
     Returns ``(modem_id, lat, lon)`` or ``None`` if the line is not a parseable
-    broadcast.
+    GPS broadcast (including telemetry ``TEL:`` frames).
     """
-    if not line.startswith(prefix):
+    parsed = parse_broadcast_payload(line, prefix=prefix)
+    if parsed is None:
         return None
-    if len(line) < 7:
-        return None
-    modem_id = line[2:5]
-    try:
-        num_chars = int(line[5:7])
-    except ValueError:
-        return None
-    data = line[7:7 + num_chars]
-    if len(data) != num_chars:
+    modem_id, data = parsed
+    if data.startswith(TELEMETRY_MARKER):
         return None
     parts = data.split(',')
     if len(parts) < 2:

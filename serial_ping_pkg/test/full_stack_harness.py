@@ -97,15 +97,22 @@ def succorfish_modem_responder(line):
 
 
 def teensy_responder(line):
-    """Emulate a Teensy: ACK any ``$Y<id><mode>`` config with ``#A<id>``.
+    """Emulate a Teensy: ACK ``$Y<id><mode>`` with modem ``#A`` then ``#Y,OK``.
 
-    The Teensy sets the modem address and echoes the modem's ``#A<id>`` back to
-    the host; the OWTT nodes gate on exactly that line.
+    Real firmware only applies the mode after the modem address ACK, then emits
+    ``#Y,OK,<id>,…``. OWTT nodes gate on that ``#Y,OK`` line (not ``#A`` alone).
     """
     line = line.strip()
     if line.startswith('$Y') and len(line) >= 6:
         own_id = line[2:5]
-        return [f'#A{own_id}']
+        mode = line[5]
+        if mode in ('T', 't') and len(line) >= 12:
+            listen = line[6:9]
+            # e.g. $Y042T0004s -> period digit(s) before trailing 's'
+            period = line[9:-1] if line.endswith('s') else '1'
+            return [f'#A{own_id}', f'#Y,OK,{own_id},T,{listen},{period}']
+        mode_char = mode.upper() if mode else '?'
+        return [f'#A{own_id}', f'#Y,OK,{own_id},{mode_char}']
     return None
 
 

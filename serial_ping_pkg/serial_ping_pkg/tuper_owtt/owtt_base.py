@@ -36,6 +36,11 @@ from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 class WireSafeSerialNode(Node):
     """Base node talking to the Teensy via the driver, with a wire-mode guard."""
 
+    # Teensy only keeps a $Y pending for ~1–5 s waiting for modem #A<id>.
+    # Resend after that window so a slow/missed ACK cannot leave us stuck in
+    # WIRE while ROS falsely believes configuration succeeded.
+    CONFIG_RETRY_PERIOD_S = 6.0
+
     def __init__(self, name):
         super().__init__(name)
         self.driver = None
@@ -45,6 +50,10 @@ class WireSafeSerialNode(Node):
         self.own_modem_id = '001'
         self._went_wire = False
         self._guard_installed = False
+        self.config_confirmed = True  # True until a $Y retry loop is armed
+        self._config_cmd = ''
+        self._expected_ok_prefix = ''
+        self._config_retry_timer = None
 
     def connect_driver(self, on_line=None, on_status=None, callback_group=None,
                        wait_timeout=None):
@@ -91,6 +100,55 @@ class WireSafeSerialNode(Node):
             self.get_logger().info(f"-> Teensy: {cmd!r}")
         if self.driver is not None:
             self.driver.write(cmd)
+
+    def arm_config_retry(self, config_cmd, retry_period_s=None):
+        """Send ``config_cmd`` and resend until ``#Y,OK,<own_id>`` is seen.
+
+        The modem-address line ``#A<id>`` alone is *not* enough: the Teensy
+        aborts a pending ``$Y`` after ``CONFIG_ADDR_TIMEOUT`` and stays in the
+        previous mode, while a late ``#A`` can still be forwarded to ROS.
+        ``#Y,OK,...`` is emitted only after the mode is actually applied.
+        """
+        own = str(self.own_modem_id).zfill(3)
+        self._config_cmd = config_cmd
+        self._expected_ok_prefix = f'#Y,OK,{own}'
+        self.config_confirmed = False
+        self.send_command(config_cmd)
+        period = self.CONFIG_RETRY_PERIOD_S if retry_period_s is None else float(retry_period_s)
+        if self._config_retry_timer is not None:
+            self._config_retry_timer.cancel()
+            self.destroy_timer(self._config_retry_timer)
+        self._config_retry_timer = self.create_timer(period, self._retry_config_if_needed)
+        self.get_logger().info(
+            f"Waiting for Teensy mode apply ({self._expected_ok_prefix}…); "
+            f"will retry $Y every {period:.1f}s until confirmed.")
+
+    def _retry_config_if_needed(self):
+        if self.config_confirmed or not self._config_cmd:
+            return
+        self.get_logger().warn(
+            f"No {self._expected_ok_prefix} yet; retrying {self._config_cmd!r}")
+        self.send_command(self._config_cmd)
+
+    def handle_config_line(self, line):
+        """Process Teensy config traffic. Returns True if the line was consumed."""
+        if not line:
+            return False
+        if line.startswith('#E,Y,'):
+            # ADDR_TIMEOUT / BUSY / ADDRESS_REJECTED / BAD_*: keep retrying.
+            self.get_logger().warn(f"Teensy config error: {line}")
+            self.config_confirmed = False
+            return True
+        if self._expected_ok_prefix and line.startswith(self._expected_ok_prefix):
+            if not self.config_confirmed:
+                self.config_confirmed = True
+                self.get_logger().info(f"Teensy config confirmed: {line}")
+            return True
+        if line.startswith('#A'):
+            # Modem address ACK only — mode apply still pending / may have aborted.
+            self.get_logger().info(f"Modem address ACK (not mode apply): {line}")
+            return True
+        return False
 
     def install_shutdown_guard(self):
         """Register atexit + SIGTERM hooks. Call once, after connect_driver."""

@@ -21,6 +21,7 @@ from launch.substitutions import (
     PythonExpression,
 )
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -105,27 +106,48 @@ def generate_launch_description():
             description='Holdover experiment: seconds since Teensy boot after which it '
                         'ignores PPS and free-runs on the OCXO (0 = never; '
                         'normal sticks keep 0)'),
+        # Defaults to robot_name so two sticks on one computer isolate
+        # /succorfish/* without a second bringup arg. Override only when graph
+        # placement must differ from vehicle identity.
+        DeclareLaunchArgument(
+            'namespace', default_value=robot_name,
+            description='ROS namespace shared with succorfish_driver (default: robot_name)'),
 
         Node(
             package='serial_ping_pkg',
             executable='owtt_follower_node',
             name='owtt_follower_node',
+            namespace=LaunchConfiguration('namespace'),
             output='screen',
             parameters=[{
-                'owtt.delta_prefix': LaunchConfiguration('owtt_delta_prefix'),
+                # Explicit str: '#I' would otherwise parse as a YAML comment
+                # (None) and '001' as int 1 during launch's type inference.
+                'owtt.delta_prefix': ParameterValue(
+                    LaunchConfiguration('owtt_delta_prefix'), value_type=str),
                 'owtt.offset_us': LaunchConfiguration('owtt_offset_us'),
                 'owtt.default_sound_velocity': LaunchConfiguration('default_sound_velocity'),
-                'owtt.sound_velocity_topic': LaunchConfiguration('sound_velocity_topic'),
-                'owtt.sound_velocity_msg_type': LaunchConfiguration('sound_velocity_msg_type'),
-                'owtt.sound_velocity_field': LaunchConfiguration('sound_velocity_field'),
-                'follower.leader_gps_msg_type': LaunchConfiguration('leader_gps_msg_type'),
-                'follower.leader1_name': LaunchConfiguration('leader1_name'),
-                'follower.leader1_modem_id': LaunchConfiguration('leader1_modem_id'),
-                'follower.leader2_name': LaunchConfiguration('leader2_name'),
-                'follower.leader2_modem_id': LaunchConfiguration('leader2_modem_id'),
-                'teensy.own_modem_id': LaunchConfiguration('own_modem_id'),
-                'teensy.mode': LaunchConfiguration('mode'),
-                'teensy.command_terminator': LaunchConfiguration('command_terminator'),
+                'owtt.sound_velocity_topic': ParameterValue(
+                    LaunchConfiguration('sound_velocity_topic'), value_type=str),
+                'owtt.sound_velocity_msg_type': ParameterValue(
+                    LaunchConfiguration('sound_velocity_msg_type'), value_type=str),
+                'owtt.sound_velocity_field': ParameterValue(
+                    LaunchConfiguration('sound_velocity_field'), value_type=str),
+                'follower.leader_gps_msg_type': ParameterValue(
+                    LaunchConfiguration('leader_gps_msg_type'), value_type=str),
+                'follower.leader1_name': ParameterValue(
+                    LaunchConfiguration('leader1_name'), value_type=str),
+                'follower.leader1_modem_id': ParameterValue(
+                    LaunchConfiguration('leader1_modem_id'), value_type=str),
+                'follower.leader2_name': ParameterValue(
+                    LaunchConfiguration('leader2_name'), value_type=str),
+                'follower.leader2_modem_id': ParameterValue(
+                    LaunchConfiguration('leader2_modem_id'), value_type=str),
+                'teensy.own_modem_id': ParameterValue(
+                    LaunchConfiguration('own_modem_id'), value_type=str),
+                'teensy.mode': ParameterValue(
+                    LaunchConfiguration('mode'), value_type=str),
+                'teensy.command_terminator': ParameterValue(
+                    LaunchConfiguration('command_terminator'), value_type=str),
                 'teensy.ignore_pps_after_s': LaunchConfiguration('ignore_pps_after_s'),
             }],
         ),
