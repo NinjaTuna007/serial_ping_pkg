@@ -73,6 +73,14 @@ class OwttLeaderNode(WireSafeSerialNode):
         self.declare_parameter('leader.modem_link_suffix', leader_cfg.get('modem_link_suffix', 'modem_link'))
         self.declare_parameter('leader.world_frame', leader_cfg.get('world_frame', 'map'))
         self.declare_parameter('leader.send_period_s', leader_cfg.get('send_period_s', 1.0))
+        # Stop pushing $G if the position topic has been silent this long.
+        self.declare_parameter(
+            'leader.max_position_age_s',
+            leader_cfg.get('max_position_age_s', 5.0))
+        # Teensy $ZPAYLOADTTL — expire stored $G after N PPS epochs (0 = never).
+        self.declare_parameter(
+            'teensy.payload_ttl_epochs',
+            teensy_cfg.get('payload_ttl_epochs', 1))
 
         self.own_modem_id = ti.normalize_modem_id(self.get_parameter('teensy.own_modem_id').value)
         self.listen_for_modem_id = ti.normalize_modem_id(self.get_parameter('teensy.listen_for_modem_id').value)
@@ -87,6 +95,10 @@ class OwttLeaderNode(WireSafeSerialNode):
         self.modem_link_suffix = self.get_parameter('leader.modem_link_suffix').get_parameter_value().string_value
         self.world_frame = self.get_parameter('leader.world_frame').get_parameter_value().string_value
         self.send_period_s = self.get_parameter('leader.send_period_s').get_parameter_value().double_value
+        self.max_position_age_s = self.get_parameter(
+            'leader.max_position_age_s').get_parameter_value().double_value
+        self.payload_ttl_epochs = int(self.get_parameter(
+            'teensy.payload_ttl_epochs').get_parameter_value().integer_value)
 
         if not self.latlon_topic and self.robot_name:
             self.latlon_topic = f"/{self.robot_name}/smarc/latlon"
@@ -112,6 +124,9 @@ class OwttLeaderNode(WireSafeSerialNode):
         ))
 
         self.latest_position = None
+        self._last_position_stamp = None
+        self._position_stale = False
+        self._payload_ttl_sent = False
         self.subscription = None
 
         # tf2 for the base_link -> modem_link lever arm (rotated into world).
@@ -125,12 +140,20 @@ class OwttLeaderNode(WireSafeSerialNode):
 
         self.timer = self.create_timer(self.send_period_s, self.push_gps_to_teensy)
         self.get_logger().info(
-            f"OWTT leader initialised (transmitter mode), pushing every {self.send_period_s}s.")
+            f"OWTT leader initialised (transmitter mode), pushing every "
+            f"{self.send_period_s}s; max_position_age_s={self.max_position_age_s}, "
+            f"payload_ttl_epochs={self.payload_ttl_epochs}.")
 
     # ------------------------------------------------------------------ helpers
 
     def latlon_callback(self, msg):
         self.latest_position = msg
+        self._last_position_stamp = self.get_clock().now()
+        if self._position_stale:
+            self._position_stale = False
+            self.get_logger().warn(
+                f"Position topic {self.latlon_topic!r} resumed; "
+                "resuming $G pushes to Teensy.")
 
     def _tf_frame_ids(self):
         """Return the set of frame ids currently known to the tf tree."""
@@ -233,7 +256,17 @@ class OwttLeaderNode(WireSafeSerialNode):
     def _on_serial_line(self, line):
         """Confirm mode apply on #Y,OK; #A alone is not enough."""
         line = line.strip()
+        was_confirmed = self.config_confirmed
         self.handle_config_line(line)
+        if self.config_confirmed and not was_confirmed:
+            self._apply_payload_ttl()
+
+    def _apply_payload_ttl(self):
+        """Push Teensy $G expiry so a dead host cannot keep stale acoustics on air."""
+        if self._payload_ttl_sent:
+            return
+        self.send_command(f'$ZPAYLOADTTL={int(self.payload_ttl_epochs)}')
+        self._payload_ttl_sent = True
 
     def push_gps_to_teensy(self):
         # Inbound #Y,OK config confirmation arrives via _on_serial_line.
@@ -245,8 +278,18 @@ class OwttLeaderNode(WireSafeSerialNode):
                 f"Waiting for Teensy config confirmation ({self._expected_ok_prefix}…) "
                 "before sending GPS...", throttle_duration_sec=5.0)
             return
-        if self.latest_position is None:
+        if not self._payload_ttl_sent:
+            self._apply_payload_ttl()
+        if self.latest_position is None or self._last_position_stamp is None:
             self.get_logger().debug("No position fix yet; nothing to push.")
+            return
+        age_s = (self.get_clock().now() - self._last_position_stamp).nanoseconds * 1e-9
+        if age_s > self.max_position_age_s:
+            if not self._position_stale:
+                self._position_stale = True
+                self.get_logger().warn(
+                    f"Position topic {self.latlon_topic!r} silent for {age_s:.1f}s "
+                    f"(limit {self.max_position_age_s:.1f}s); stopping $G pushes to Teensy.")
             return
         lat = self.latest_position.latitude
         lon = self.latest_position.longitude
