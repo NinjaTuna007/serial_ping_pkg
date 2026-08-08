@@ -2,3 +2,6 @@
 __pycache__/
 # local folder
 local/
+
+#AI Agent Hygiene
+.cursor/
