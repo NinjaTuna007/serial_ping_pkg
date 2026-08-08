@@ -5,3 +5,4 @@ local/
 
 #AI Agent Hygiene
 .cursor/
+.claude/
