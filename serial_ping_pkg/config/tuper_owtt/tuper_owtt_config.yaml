@@ -31,8 +31,13 @@ owtt:
   # Line prefix the Teensy uses to report the measured OWTT delta.
   delta_prefix: "#I"
   # Constant offset subtracted from the reported delta, in microseconds.
-  # Calibrated against GPS truth in the live setting (lolo <-> floatsam, Askö 2026).
+  # Used as fallback before auto-cal locks (or when auto_calibrate is false).
   offset_us: 79500.0
+  # Learn offset_us per leader modem from GPS truth (own fix vs broadcast).
+  # Locks after calib_min_samples; same idea as owtt_beacon surface_unit.
+  auto_calibrate: true
+  calib_min_samples: 5
+  calib_window: 20
   # Fallback sound speed (m/s) used when no live SVS data is available.
   default_sound_velocity: 1500.0
   # Optional live sound-velocity source (subscribed if available).
@@ -45,7 +50,7 @@ follower:
   leader_gps_msg_type: "GeoPoint"     # GeoPoint | NavSatFix
   # Two leaders, routed by acoustic modem id -> leader name. Names and modem ids
   # are overridable from launch arguments. Output topics become
-  # /<name>/smarc/latlon and /<name>/distance.
+  # owtt/<name>/smarc/latlon and owtt/<name>/distance under the node namespace.
   leader1_name: "leader1"
   leader1_modem_id: "067"
   leader2_name: "leader2"

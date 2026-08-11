@@ -7,8 +7,9 @@ single-node run.
 robot_name selects the sound-velocity mapping: 'lolo' keeps the legacy
 svs_interfaces/msg/SVS feed (/lolo/sensors/svs); any other name uses the stick
 convention (std_msgs/msg/Float64 on /<robot_name>/smarc/sound_velocity).
-Explicit sound_velocity_* arguments always win. The follower node itself stays
-unnamespaced (its /<leader>/... outputs are absolute by design).
+Explicit sound_velocity_* arguments always win. Outputs are relative under
+``owtt/<leader>/...`` so they land in this launch's namespace, e.g.
+``/stick_3/owtt/stick_1/distance``.
 """
 import launch
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -58,7 +59,17 @@ def generate_launch_description():
         DeclareLaunchArgument('owtt_delta_prefix', default_value='#I',
                               description='Teensy OWTT delta line prefix'),
         DeclareLaunchArgument('owtt_offset_us', default_value='79500.0',
-                              description='Constant offset subtracted from delta (microseconds)'),
+                              description='Fallback offset subtracted from delta (µs); '
+                                          'overridden per-leader once auto-cal locks'),
+        DeclareLaunchArgument(
+            'auto_calibrate', default_value='true',
+            description='Learn offset_us per leader from GPS truth (own vs broadcast)'),
+        DeclareLaunchArgument(
+            'calib_min_samples', default_value='5',
+            description='GPS-truth samples before auto-cal locks per leader'),
+        DeclareLaunchArgument(
+            'calib_window', default_value='20',
+            description='Max samples kept in the auto-cal running median'),
         DeclareLaunchArgument('default_sound_velocity', default_value='1500.0',
                               description='Fallback sound speed (m/s)'),
 
@@ -125,6 +136,10 @@ def generate_launch_description():
                 'owtt.delta_prefix': ParameterValue(
                     LaunchConfiguration('owtt_delta_prefix'), value_type=str),
                 'owtt.offset_us': LaunchConfiguration('owtt_offset_us'),
+                'owtt.auto_calibrate': ParameterValue(
+                    LaunchConfiguration('auto_calibrate'), value_type=bool),
+                'owtt.calib_min_samples': LaunchConfiguration('calib_min_samples'),
+                'owtt.calib_window': LaunchConfiguration('calib_window'),
                 'owtt.default_sound_velocity': LaunchConfiguration('default_sound_velocity'),
                 'owtt.sound_velocity_topic': ParameterValue(
                     LaunchConfiguration('sound_velocity_topic'), value_type=str),

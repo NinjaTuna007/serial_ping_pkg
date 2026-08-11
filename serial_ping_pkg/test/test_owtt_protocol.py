@@ -208,8 +208,8 @@ def test_owtt_follower_publishes_position_and_range():
 
     st = Stack(responder=teensy_responder, profile='teensy').start_driver()
     st.start_probe()
-    positions = st.probe.collect(GeoPoint, '/leader1/smarc/latlon')
-    ranges = st.probe.collect(Float32, '/leader1/distance')
+    positions = st.probe.collect(GeoPoint, '/owtt/leader1/smarc/latlon')
+    ranges = st.probe.collect(Float32, '/owtt/leader1/distance')
     st.start_node(exe('owtt_follower_node'),
                   ['-p', 'follower.leader1_modem_id:=7', '-p', 'owtt.offset_us:=0.0'])
     assert st.fake.wait_for_command(lambda c: c.endswith('R'), timeout=6.0)

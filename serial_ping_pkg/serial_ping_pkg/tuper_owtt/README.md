@@ -44,8 +44,8 @@ interface (from `succorfish_msgs/Topics`):
 ```
             ROS (leader)                              ROS (follower / receiver)
  ┌───────────────────────────────┐            ┌────────────────────────────────────┐
- │ /<robot>/smarc/latlon         │            │  /<leader>/smarc/latlon  (position)│
- │            │ (tf base→modem)  │            │  /<leader>/distance      (range)   │
+ │ /<robot>/smarc/latlon         │            │  owtt/<leader>/smarc/latlon (pos)  │
+ │            │ (tf base→modem)  │            │  owtt/<leader>/distance  (range)   │
  │            ▼                  │            │            ▲          ▲            │
  │     owtt_leader_node          │            │      owtt_follower_node            │
  └────────────┬──────────────────┘            └────────────┬───────────────────────┘
@@ -143,8 +143,8 @@ is unavailable.
 | Direction | Topic | Type | Notes |
 |-----------|-------|------|-------|
 | Subscribe | `owtt.sound_velocity_topic` (default `/lolo/sensors/svs`) | `svs_interfaces/msg/SVS` | optional live sound speed (field `svs`); gated, defaults to 1500 m/s |
-| Publish | `/<leader>/smarc/latlon` | `GeoPoint` / `NavSatFix` | reconstructed leader position (per modem-id map) |
-| Publish | `/<leader>/distance` | `std_msgs/Float32` | OWTT-derived range in metres |
+| Publish | `owtt/<leader>/smarc/latlon` | `GeoPoint` / `NavSatFix` | reconstructed leader position (under follower namespace) |
+| Publish | `owtt/<leader>/distance` | `std_msgs/Float32` | OWTT-derived range in metres (under follower namespace) |
 
 Each `#I` delta is paired with the immediately preceding `#B` broadcast to know
 which leader it belongs to.
