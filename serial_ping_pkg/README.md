@@ -1,14 +1,11 @@
-# serial_ping_pkg (ROS 2)
+# serial_ping_pkg
 
-A ROS 2 package for underwater acoustic communication and ranging with
-Succorfish Delphis / NM3 modems (and a Teensy 4.1 front-end for the
-one-way-travel-time scenarios). It provides several self-contained sub-packages
-covering acoustic pinging, range-only localization, position relaying, and
-autonomous leader/follower behaviours.
+Underwater acoustic communication and ranging with Succorfish Delphis / NM3
+modems (and a Teensy 4.1 front-end for one-way travel time): pinging,
+range-only localization, position relay, and leader/follower.
 
-It is one `ament_python` ROS 2 package; each sub-package owns its own code,
-config, launch files, and README so scenarios stay independent while sharing one
-build.
+Each scenario has its own code, config, launch files, and README, sharing one
+`ament_python` package.
 
 ---
 
@@ -23,20 +20,18 @@ build.
 | `tuper_owtt` | One-way-travel-time leader/follower using a PPS/OCXO-disciplined Teensy front-end. | [serial_ping_pkg/tuper_owtt/README.md](serial_ping_pkg/tuper_owtt/README.md) |
 | `owtt_beacon` | OWTT beacon telemetry + surface-unit reception + MQTT-fed triangulation/inference. | [serial_ping_pkg/owtt_beacon/README.md](serial_ping_pkg/owtt_beacon/README.md) |
 
-The shared library `serial_ping_pkg/utils.py` (`load_yaml_config`) sits at the
-package root and is imported by every sub-package. Serial transport is no longer
-handled here: every node talks to the `succorfish_driver` over ROS via the
-`serial_ping_pkg/common/driver_client.py` (`DriverClient`) helper.
+Shared config loading lives in `serial_ping_pkg/utils.py`. Nodes talk to the
+modem through `succorfish_driver` via `serial_ping_pkg/common/driver_client.py`
+(`DriverClient`) — they don't open the serial port themselves.
 
 ---
 
 ## Talking to the modem (the driver)
 
-**No node in this package opens a serial port.** The physical link (Succorfish
-modem or Teensy front-end) is owned exclusively by the `succorfish_driver` node,
-which lives in the sibling [`succorfish_driver/`](../succorfish_driver/README.md)
-submodule. Every node here communicates with it over a small ROS interface
-(names from `succorfish_msgs/Topics`, **relative** so they line up by namespace):
+The physical link (Succorfish modem or Teensy front-end) is owned by
+[`succorfish_driver`](../succorfish_driver/README.md). Nodes here talk to it
+over a small ROS interface (names from `succorfish_msgs/Topics`, relative so
+they line up by namespace):
 
 | Name | Type | Direction | Use |
 |------|------|-----------|-----|
@@ -63,35 +58,25 @@ or namespace.
 
 ## Layout
 
-This package lives inside the `serial_ping` meta-repo (see the
-[meta README](../README.md)), as a sibling of the `succorfish_driver` submodule
-and the shared `vendor/` and `microcontroller/` submodules.
-
 ```
-serial_ping_pkg/                  # meta repo root (no package.xml)
-├── serial_ping_pkg/              # THIS package
-│   ├── serial_ping_pkg/          # python source
-│   │   ├── utils.py              # shared library (config loader)
-│   │   ├── common/               # general-purpose nodes (+ ping_protocol.py, driver_client.py)
-│   │   ├── acoustic_relay/       # position broadcast/receive (+ pos_protocol.py)
-│   │   ├── ping_estimator_action/# range-only localization action server (+ range_estimators.py)
-│   │   ├── tuper_twtt/           # TWTT informed leader/follower (+ leader_protocol.py)
-│   │   ├── tuper_owtt/           # OWTT leader/follower (Teensy front-end)
-│   │   └── owtt_beacon/          # OWTT beacon telemetry + inference
-│   ├── config/<subpkg>/...       # YAML defaults, grouped per sub-package
-│   ├── launch/<subpkg>/...       # launch files, grouped per sub-package
-│   ├── test/                     # pure-logic + lint tests
-│   ├── data/                     # sample/data files installed to share/
-│   └── package.xml  setup.py  setup.cfg
-├── succorfish_driver/            # SUBMODULE: serial bridge node + interfaces
-├── vendor/succorfish/            # SUBMODULE: NM3 firmware + Delphis manuals (NinjaTuna007/fishsuccor)
-└── microcontroller/succor-sketches/  # SUBMODULE: Teensy/Arduino sketches (NinjaTuna007/succor-sketches)
+serial_ping_pkg/
+├── serial_ping_pkg/           # python source
+│   ├── utils.py               # shared config loader
+│   ├── common/                # general-purpose nodes (+ ping_protocol.py, driver_client.py)
+│   ├── acoustic_relay/        # position broadcast/receive (+ pos_protocol.py)
+│   ├── ping_estimator_action/ # range-only localization action server (+ range_estimators.py)
+│   ├── tuper_twtt/            # TWTT informed leader/follower (+ leader_protocol.py)
+│   ├── tuper_owtt/            # OWTT leader/follower (Teensy front-end)
+│   └── owtt_beacon/           # OWTT beacon telemetry + inference
+├── config/<subpkg>/
+├── launch/<subpkg>/
+├── test/
+├── data/
+└── package.xml  setup.py  setup.cfg
 ```
 
-See [../vendor/README.md](../vendor/README.md) and
-[../microcontroller/README.md](../microcontroller/README.md) for the vendor
-submodules, and [../succorfish_driver/README.md](../succorfish_driver/README.md)
-for the serial bridge that every node here now talks to.
+The serial driver, vendor manuals, and Teensy sketches sit next to this package
+in the [repo root](../README.md).
 
 ---
 
@@ -99,12 +84,9 @@ for the serial bridge that every node here now talks to.
 
 ### Clone with submodules
 
-The vendor firmware/manuals and the microcontroller sketches are git submodules,
-so clone recursively:
-
 ```bash
-git clone --recurse-submodules <repo-url>
-# or, in an existing checkout:
+git clone --recurse-submodules https://github.com/NinjaTuna007/serial_ping_pkg.git
+# already cloned?
 git submodule update --init --recursive
 ```
 
@@ -120,8 +102,6 @@ rosdep install --from-paths src --ignore-src -r -y
 ### Build
 
 ```bash
-cd ~/your_ros2_workspace
-# Build this package plus the serial bridge it depends on
 colcon build --packages-select succorfish_msgs succorfish_driver serial_ping_pkg
 source install/setup.bash
 ```
@@ -131,11 +111,11 @@ source install/setup.bash
 ## Quickstart
 
 Start the `succorfish_driver` first (it owns the serial port), then bring up the
-node(s) you need in the same namespace. Every launch file exposes all node
-parameters as `arg:=value` overrides (the YAML files are just the bare-`ros2 run`
-fallback). See each sub-package README for the full, fully-parametrized command
-lines, and the [driver README](../succorfish_driver/README.md) for its profiles.
-A few entry points:
+node(s) you need in the same namespace. Launch files take `arg:=value` overrides;
+the YAML files are the fallback for a bare `ros2 run`. See each sub-package
+README for the full command lines, and the
+[driver README](../succorfish_driver/README.md) for its profiles. A few entry
+points:
 
 ```bash
 # 0) The serial bridge (pick the profile for your hardware) -- keep it running

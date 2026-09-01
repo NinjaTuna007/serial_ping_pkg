@@ -1,39 +1,35 @@
-# serial_ping (meta-repo)
+# serial_ping_pkg
 
-This repository is a **meta directory** (not itself a ROS 2 package). It groups
-several sibling ROS 2 packages and shared vendor resources so they can be cloned
-and built together while staying independently buildable by `colcon`.
+ROS 2 nodes for underwater acoustic ranging and comms with Succorfish Delphis /
+NM3 modems (and a Teensy 4.1 front-end for one-way travel time).
 
-## Contents
+Drop this checkout under a colcon workspace `src/` and build. The nodes live in
+`serial_ping_pkg/`; the serial driver, vendor manuals, and Teensy sketches ride
+along as submodules.
 
-| Path | Type | What it is |
-|------|------|------------|
-| [`serial_ping_pkg/`](serial_ping_pkg/README.md) | ROS 2 package (`ament_python`) | Acoustic communication & ranging nodes (ping, range-only localization, position relay, TWTT/OWTT leader-follower). |
-| [`succorfish_driver/`](succorfish_driver/README.md) | **submodule** (2 packages) | `succorfish_driver` (transparent serial bridge node) + `succorfish_msgs` (interfaces). Owns the serial port and exposes it over ROS topics. |
-| [`vendor/succorfish/`](vendor/README.md) | submodule | NM3 firmware + Succorfish Delphis manuals (`NinjaTuna007/fishsuccor`). |
-| [`microcontroller/succor-sketches/`](microcontroller/README.md) | submodule | Teensy / Arduino sketches (`NinjaTuna007/succor-sketches`). |
+## What's in here
 
-```
-serial_ping_pkg/                     # this meta repo (no package.xml at root)
-├── serial_ping_pkg/                 # ROS package: acoustic comms/ranging nodes
-├── succorfish_driver/               # SUBMODULE: serial bridge
-│   ├── succorfish_driver/           #   - ament_python driver node
-│   └── succorfish_msgs/             #   - ament_cmake/rosidl interfaces
-├── vendor/succorfish/               # SUBMODULE: firmware + manuals
-└── microcontroller/succor-sketches/ # SUBMODULE: microcontroller sketches
-```
+| Path | What it is |
+|------|------------|
+| [`serial_ping_pkg/`](serial_ping_pkg/README.md) | Acoustic comms and ranging: ping, range-only localization, position relay, TWTT/OWTT leader-follower. |
+| [`succorfish_driver/`](succorfish_driver/README.md) | Serial bridge plus `succorfish_msgs`. Owns the modem port and exposes it over ROS. |
+| [`vendor/succorfish/`](vendor/README.md) | NM3 firmware and Delphis manuals. |
+| [`microcontroller/succor-sketches/`](microcontroller/README.md) | Teensy / Arduino sketches. |
 
-## Clone with submodules
+The last three are git submodules (`NinjaTuna007/succorfish_driver`,
+`NinjaTuna007/fishsuccor`, `NinjaTuna007/succor-sketches`).
+
+## Clone
 
 ```bash
-git clone --recurse-submodules <repo-url>
-# or, in an existing checkout:
+git clone --recurse-submodules https://github.com/NinjaTuna007/serial_ping_pkg.git
+# already cloned?
 git submodule update --init --recursive
 ```
 
 ## Build
 
-All packages live under one workspace `src/`. From your workspace root:
+From the workspace root:
 
 ```bash
 rosdep install --from-paths src --ignore-src -r -y
@@ -41,19 +37,14 @@ colcon build
 source install/setup.bash
 ```
 
-To build a subset:
+Just the acoustic stack:
 
 ```bash
 colcon build --packages-select serial_ping_pkg succorfish_msgs succorfish_driver
 ```
 
-## Layout note
+Each package has its own README for running nodes.
 
-The repo root intentionally has **no** `package.xml`. Each ROS package is a child
-directory, so `colcon` discovers `serial_ping_pkg`, `succorfish_msgs`, and
-`succorfish_driver` as independent sibling packages. See each package's README
-for usage.
-
-## Maintainer & license
+## Maintainer
 
 **Shekhar Devm Upadhyay** (sdup@kth.se) — MIT License.

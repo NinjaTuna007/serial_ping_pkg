@@ -31,10 +31,10 @@ receive in:    #B<modem-id(3)><nn><lat>,<lon>,<depth>,<heading>\r\n
 
 ## Running it
 
-> **Serial link is owned by the driver.** These nodes no longer open a serial
-> port. The sibling [`succorfish_driver`](../../../succorfish_driver/README.md)
-> package exclusively owns the modem and must be running. Nodes talk to it over
-> ROS via `DriverClient` (`serial_ping_pkg/common/driver_client.py`):
+> **Serial link is owned by the driver.**
+> [`succorfish_driver`](../../../succorfish_driver/README.md) owns the modem
+> and must be running. Nodes talk to it over ROS via `DriverClient`
+> (`serial_ping_pkg/common/driver_client.py`):
 > outbound `$B` frames go to `succorfish/tx`, inbound lines arrive on
 > `succorfish/rx`. These names are relative, so the node and driver line up when
 > they share a namespace. The link profile (9600-baud `/dev/ttyUSB*` Succorfish

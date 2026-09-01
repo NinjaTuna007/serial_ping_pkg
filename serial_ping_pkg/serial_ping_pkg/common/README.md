@@ -1,10 +1,8 @@
 # common
 
-General-purpose acoustic nodes that are not tied to any one scenario (OWTT,
-TWTT, relay, etc.). These are the simple, reusable building blocks: basic
-two-way ranging and a generic broadcast receiver. They no longer open a serial
-port themselves: the `succorfish_driver` node owns the physical modem and these
-nodes talk to it over ROS.
+General-purpose acoustic nodes that aren't tied to any one scenario (OWTT,
+TWTT, relay, etc.): basic two-way ranging and a generic broadcast receiver.
+They talk to the modem through `succorfish_driver` over ROS.
 
 > Driver requirement: a `succorfish_driver` node must be running. These nodes
 > reach it through the relative names `succorfish/tx` (`std_msgs/String`, raw
@@ -23,10 +21,6 @@ wraps these topics/service for the nodes here.
 Shared, hardware-free wire-format helpers live in `ping_protocol.py`
 (`travel_time_to_distance`, `ping_response_complete`, `parse_ping_distance`,
 `parse_leader_broadcast`) and are unit-tested in `test/test_common_protocol.py`.
-
-> Note: the shared library `serial_ping_pkg/utils.py` (`load_yaml_config`)
-> intentionally lives at the package root, not here, since every sub-package
-> imports it.
 
 ---
 
@@ -115,9 +109,9 @@ callback (no read timer/buffer of its own). Bare run:
 | `single_target_ping_node` | `distance_topic_suffix` | `distance_topic_suffix` | `distance_to_usv` | distance topic suffix |
 | `single_target_ping_node` | `serial.timeout_threshold` | `timeout_threshold` | `5.0` | per-ping reply timeout (s) |
 
-The serial device/baudrate are no longer parameters here — they belong to the
-`succorfish_driver` you launch (which also selects the Succorfish vs Teensy
-profile). These nodes only need a driver reachable in their namespace.
+Port and baudrate live on the `succorfish_driver` you launch (which also
+selects the Succorfish vs Teensy profile). These nodes only need a driver
+reachable in their namespace.
 
 Defaults for `serial_ping_node` / `single_target_ping_node` live in
 [`config/common/serial_config.yaml`](../../../config/common/serial_config.yaml)

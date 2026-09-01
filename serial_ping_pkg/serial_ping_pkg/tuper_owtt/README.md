@@ -5,12 +5,12 @@ One-way-travel-time (OWTT) acoustic ranging stack. Unlike
 just broadcast their position** and each receiver derives range from the
 one-way acoustic travel time measured by a **Teensy 4.1** front-end.
 
-The ROS nodes never talk to the Succorfish modem directly — and they no longer
-open the serial port either. The **`succorfish_driver`** node owns the Teensy
-link (115200 baud / `/dev/ttyACM*`, its `teensy` profile) and the nodes here
-talk to it over ROS (see [Talking to the driver](#talking-to-the-driver)). The
-Teensy does the precise timing (PPS + OCXO disciplined), relays to/from the
-modem, and is configured into one of three modes by a `$Y` command.
+The ROS nodes never talk to the Succorfish modem directly.
+`succorfish_driver` owns the Teensy link (115200 baud / `/dev/ttyACM*`, its
+`teensy` profile) and the nodes here talk to it over ROS (see
+[Talking to the driver](#talking-to-the-driver)). The Teensy does the precise
+timing (PPS + OCXO disciplined), relays to/from the modem, and is configured
+into one of three modes by a `$Y` command.
 
 > The legacy `tuper_twtt` stack is untouched and still works on the
 > same upgraded hardware; this is the parallel "new system" software.
@@ -97,9 +97,9 @@ confirmed; the new config is only applied on confirmation.
 ### Wire-safe shutdown
 
 Both nodes **always reset the Teensy to wire mode (`$Y<id>W`) on exit** — clean
-shutdown, Ctrl-C, an unhandled crash, or SIGTERM. Because the node no longer owns
-the port (the `succorfish_driver` does), this is guaranteed by **two complementary
-mechanisms**, covering whichever process dies first:
+shutdown, Ctrl-C, an unhandled crash, or SIGTERM. The `succorfish_driver` owns
+the port, so this is covered by **two complementary mechanisms**, whichever
+process dies first:
 
 1. **Node-side (node exits, driver stays up).** `owtt_base.py` disables rclpy's
    default signal handlers and drives the node from a manual spin loop, so on a
@@ -225,12 +225,10 @@ a launch argument.
 
 Sometimes you just want to fire a single command at the Teensy/modem — set wire
 mode, provision a modem id, send a ping or a broadcast — **without running a
-node**. `teensy_cmd` does exactly that, but it no longer opens the port itself:
-it talks to the running `succorfish_driver` over the `succorfish/send_command`
-service. It writes the command (the driver appends the terminator), optionally
-collects the reply for a few seconds, prints it, and exits. Because it never
-touches the port directly, it is **safe to run while the driver and other nodes
-are live** (no more port contention).
+node**. `teensy_cmd` does exactly that through the running `succorfish_driver`
+over the `succorfish/send_command` service. It writes the command (the driver
+appends the terminator), optionally collects the reply for a few seconds,
+prints it, and exits. Safe to run while the driver and other nodes are live.
 
 The driver must be running. To target a specific driver, launch the tool in the
 same namespace (e.g. `--ros-args -r __ns:=/teensy`).

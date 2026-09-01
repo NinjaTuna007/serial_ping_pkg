@@ -17,11 +17,9 @@ can reconstruct where the leader is and how far away it is ("informed" ranging).
 
 ## Serial access via the driver
 
-These nodes no longer open a serial port themselves. The sibling
-[`succorfish_driver`](../../../succorfish_driver/README.md) package exclusively
-owns the modem and **must be running**; the nodes talk to it over ROS through
-the `DriverClient` helper using these relative names (lined up with the driver
-by namespace):
+[`succorfish_driver`](../../../succorfish_driver/README.md) owns the modem and
+**must be running**; the nodes talk to it over ROS through `DriverClient`
+using these relative names (lined up with the driver by namespace):
 
 - `succorfish/tx` (`std_msgs/String`) — outbound command, client → driver (the driver appends the line terminator).
 - `succorfish/rx` (`succorfish_msgs/SerialLine`) — inbound lines, driver → clients.
@@ -170,8 +168,7 @@ ros2 launch serial_ping_pkg twtt_leader_node.launch is_slave:=true
 
 ### Launch arguments
 
-The serial port/baudrate are no longer launch arguments — the
-`succorfish_driver` owns the port. The leader exposes `robot_name`,
+Port and baudrate live on `succorfish_driver`. The leader exposes `robot_name`,
 `ping_command`, `sound_velocity`, `timeout_threshold`, and `is_slave`; the
 follower exposes `leader_name`.
 

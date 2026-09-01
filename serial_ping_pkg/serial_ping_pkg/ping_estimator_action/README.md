@@ -12,9 +12,9 @@ Unlike `tuper_owtt` (one-way travel time via a Teensy), this stack does
 classic **two-way** ranging and reaches either a raw Succorfish modem or a
 Teensy bridge in transparent wire mode through the `succorfish_driver`.
 
-> **Driver requirement:** this node no longer opens a serial port. A
-> `succorfish_driver` node owns the physical modem and must be running. The node
-> reaches it through the relative names `succorfish/tx` (`std_msgs/String`, raw
+> **Driver requirement:** a `succorfish_driver` node owns the physical modem
+> and must be running. The node reaches it through the relative names
+> `succorfish/tx` (`std_msgs/String`, raw
 > outbound command — the driver appends the line terminator), `succorfish/rx`
 > (`succorfish_msgs/SerialLine`, every inbound line), `succorfish/connected`
 > (`std_msgs/Bool`, latched link state) and the `succorfish/send_command`

@@ -112,9 +112,9 @@ Subscribes (under `beacon.name`'s namespace):
 - `…/waraps/sensor/bt` (`std_msgs/String` JSON, field `tip`) — if `bt` enabled
 
 Sends `$Y…T…` (transmitter config) then periodic `$K<payload>` once the modem
-confirms with `#A<own_id>`. It no longer opens a serial port: outbound commands
-go via `DriverClient.write` to `succorfish/tx` and inbound lines (the `#A`
-confirmation, control broadcasts) arrive on the `succorfish/rx` callback. On any
+confirms with `#A<own_id>`. Outbound commands go via `DriverClient.write` to
+`succorfish/tx`; inbound lines (the `#A` confirmation, control broadcasts)
+arrive on the `succorfish/rx` callback. On any
 exit it returns the Teensy to WIRE mode by publishing `$Y<own_id>W` on
 `succorfish/tx`, flushed before shutdown (see *Serial link*).
 
