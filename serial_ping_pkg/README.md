@@ -9,6 +9,39 @@ Each scenario has its own code, config, launch files, and README, sharing one
 
 ---
 
+## USB Delphis (no Teensy)
+
+If you have a Succorfish Delphis / NM3 on USB and just want to ping another
+modem:
+
+1. Plug the dongle in. It usually shows up as `/dev/ttyUSB0` (9600 baud). Your
+   user needs to be in the `dialout` group (`sudo usermod -aG dialout $USER`,
+   then log out and back in).
+2. Build and source the workspace (see [Install & build](#install--build)).
+3. Ping a remote 3-digit modem id:
+
+```bash
+ros2 launch serial_ping_pkg delphis_ping.launch ping_command:=\$P007
+# if the dongle is not ttyUSB0:
+ros2 launch serial_ping_pkg delphis_ping.launch serial_port:=/dev/ttyUSB1 ping_command:=\$P007
+```
+
+That starts `succorfish_driver` (Succorfish profile) and
+`single_target_ping_node` together. Range is published as
+`/<robot_name>/distance` (`std_msgs/Float32`; default robot name `delphis`).
+Echo it with `ros2 topic echo /delphis/distance`.
+
+Desk test with no hardware: add `driver_backend:=test` (in-memory pretend
+modem). Same launch, no Teensy, no PPS.
+
+To relay GPS over the acoustic link, use
+[`acoustic_relay`](serial_ping_pkg/acoustic_relay/README.md). For two-way
+informed ranging, [`tuper_twtt`](serial_ping_pkg/tuper_twtt/README.md).
+One-way travel time with a Teensy front-end is a separate stack:
+[`tuper_owtt`](serial_ping_pkg/tuper_owtt/README.md).
+
+---
+
 ## Sub-packages
 
 | Sub-package | What it does | README |

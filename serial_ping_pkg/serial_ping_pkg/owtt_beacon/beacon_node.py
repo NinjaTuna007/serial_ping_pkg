@@ -46,6 +46,7 @@ from serial_ping_pkg.utils import load_yaml_config
 from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
 from serial_ping_pkg.owtt_beacon import beacon_telemetry as bt_codec
+from serial_ping_pkg.common.on_air import LATLON_DECIMALS
 
 
 class BeaconNode(WireSafeSerialNode):
@@ -87,7 +88,9 @@ class BeaconNode(WireSafeSerialNode):
         # Strip this leading prefix from the bt name, e.g. "A_Chilling" ->
         # "Chilling" (the "A_" carries no info). Empty = keep as-is.
         self.declare_parameter('beacon.bt_strip_prefix', beacon_cfg.get('bt_strip_prefix', 'A_'))
-        self.declare_parameter('beacon.position_precision', beacon_cfg.get('position_precision', 6))
+        self.declare_parameter(
+            'beacon.position_precision',
+            beacon_cfg.get('position_precision', LATLON_DECIMALS))
         self.declare_parameter('beacon.max_bt_len', beacon_cfg.get('max_bt_len', 32))
         # Max on-air bytes for the modem packet (Succorfish NM3 caps at 64). The
         # encoded telemetry payload is trimmed so that TEL:<payload> fits this.

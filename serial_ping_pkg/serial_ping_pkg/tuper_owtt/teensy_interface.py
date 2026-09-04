@@ -80,9 +80,11 @@ def build_config_command(mode, own_modem_id, listen_for_modem_id="000",
 def build_gps_command(lat, lon, prefix="$G"):
     """Build the ``$G<lat>,<lon>`` command that updates the transmitter's GPS.
 
-    TODO(plan): confirm coordinate precision / formatting expected by the Teensy.
+    Lat/lon are formatted with ``on_air.LATLON_DECIMALS``. The Teensy stores the
+    substring after ``$G`` and puts it on air unchanged.
     """
-    return f"{prefix}{lat},{lon}"
+    from serial_ping_pkg.common.on_air import format_latlon
+    return f'{prefix}{format_latlon(lat, lon)}'
 
 
 # Marker that the Teensy prepends to a telemetry broadcast payload. A received

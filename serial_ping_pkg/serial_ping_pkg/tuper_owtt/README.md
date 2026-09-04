@@ -127,7 +127,7 @@ stays protocol-agnostic — it just replays the opaque string the node registere
 | Direction | Topic | Type | Notes |
 |-----------|-------|------|-------|
 | Subscribe | `leader.latlon_topic` (default `/<robot_name>/smarc/latlon`) | `geographic_msgs/GeoPoint` | leader's own GPS |
-| Driver out | `$G<lat>,<lon>` on `succorfish/tx` | `std_msgs/String` | modem position after lever-arm transform |
+| Driver out | `$G<lat>,<lon>` on `succorfish/tx` | `std_msgs/String` | modem position after lever-arm transform; lat/lon at 7 decimal places (`on_air`) |
 
 On startup it sends `$Y<own_id>T…` and then **waits for the modem's `#A<own_id>`
 confirmation** (forwarded to the host) before sending any `$G` — the Teensy only

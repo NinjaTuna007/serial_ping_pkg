@@ -23,9 +23,12 @@ Pure wire-format logic lives in `pos_protocol.py` (`build_pos_broadcast`,
 ### Serial wire format
 
 ```
-broadcast out: $B<nn><lat>,<lon>,<depth>,<heading>     (nn = zero-padded payload length)
+broadcast out: $B<nn><lat>,<lon>,<depth>,<heading>     (nn = payload length)
 receive in:    #B<modem-id(3)><nn><lat>,<lon>,<depth>,<heading>\r\n
 ```
+
+Lat/lon are 7 decimal places (~1 cm), depth is centimetres (`DDD.DD`), heading
+is integer degrees. Defaults live in `serial_ping_pkg.common.on_air`.
 
 ---
 

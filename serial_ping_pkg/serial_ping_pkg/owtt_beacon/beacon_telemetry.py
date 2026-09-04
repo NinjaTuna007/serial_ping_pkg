@@ -25,11 +25,19 @@ a *slant* range to a possibly-submerged beacon. Broadcasting depth lets the
 inference node convert slant ranges to horizontal ranges before triangulating.
 
 Example (position + depth + svs + speed + bt):
-    P58.823229,17.635998;D12.3;C1481.6;S1.20;BA_Chilling (Status.RUNNING)
+    P58.8232290,17.6359980;D12.30;C1481.6;S1.20;BA_Chilling (Status.RUNNING)
 
 Keep the total small: the Succorfish broadcast length is a 2-digit byte count
 and real payloads are limited (~64 bytes), so prefer few fields / short bt text.
 """
+
+from serial_ping_pkg.common.on_air import (
+    LATLON_DECIMALS,
+    format_depth,
+    format_latlon,
+    format_speed,
+    format_svs,
+)
 
 # field name <-> single-char tag
 FIELD_TAGS = {
@@ -64,7 +72,7 @@ _TRIM_ORDER = ('bt', 'speed', 'depth', 'svs')
 
 
 def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=None,
-                     bt=None, precision=6, max_bt_len=32, max_payload_len=0):
+                     bt=None, precision=None, max_bt_len=32, max_payload_len=0):
     """Encode the enabled telemetry fields into the post-marker payload string.
 
     ``enabled_fields`` is an iterable of field names (subset of
@@ -76,8 +84,11 @@ def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=
     ``max_payload_len`` (0 = unlimited) bounds the encoded payload so the on-air
     frame (``TEL:`` + payload) fits the modem's packet limit. When exceeded, the
     free-text ``bt`` is truncated then dropped, then ``speed``/``depth``/``svs``
-    are dropped in turn; ``position`` is always preserved.
+    are dropped in turn; ``position`` is always preserved. ``precision`` defaults
+    to ``on_air.LATLON_DECIMALS``.
     """
+    if precision is None:
+        precision = LATLON_DECIMALS
     enabled = set(enabled_fields)
     tokens = {}
     for field in DEFAULT_FIELD_ORDER:
@@ -85,15 +96,15 @@ def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=
             continue
         if field == 'position' and position is not None:
             lat, lon = position
-            tokens['position'] = f"P{float(lat):.{precision}f},{float(lon):.{precision}f}"
+            tokens['position'] = 'P' + format_latlon(lat, lon, decimals=precision)
         elif field == 'depth' and depth is not None:
-            tokens['depth'] = f"D{float(depth):.1f}"
+            tokens['depth'] = 'D' + format_depth(depth)
         elif field == 'svs' and svs is not None:
-            tokens['svs'] = f"C{float(svs):.1f}"
+            tokens['svs'] = 'C' + format_svs(svs)
         elif field == 'speed' and speed is not None:
-            tokens['speed'] = f"S{float(speed):.2f}"
+            tokens['speed'] = 'S' + format_speed(speed)
         elif field == 'bt' and bt is not None:
-            tokens['bt'] = "B" + sanitize(bt)[:max_bt_len]
+            tokens['bt'] = 'B' + sanitize(bt)[:max_bt_len]
 
     def assemble(toks):
         return ';'.join(toks[f] for f in DEFAULT_FIELD_ORDER if f in toks)
@@ -106,7 +117,7 @@ def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=
             bt_text = tokens['bt'][1:]
             kept = bt_text[:max(0, len(bt_text) - over)]
             if kept:
-                tokens['bt'] = "B" + kept
+                tokens['bt'] = 'B' + kept
             else:
                 tokens.pop('bt')
             payload = assemble(tokens)

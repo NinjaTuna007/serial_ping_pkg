@@ -45,6 +45,14 @@ colcon build --packages-select serial_ping_pkg succorfish_msgs succorfish_driver
 
 Each package has its own README for running nodes.
 
+USB Delphis / NM3 only (no Teensy): see
+[USB Delphis (no Teensy)](serial_ping_pkg/README.md#usb-delphis-no-teensy)
+in the package README, or:
+
+```bash
+ros2 launch serial_ping_pkg delphis_ping.launch ping_command:=\$P007
+```
+
 ## Maintainer
 
 **Shekhar Devm Upadhyay** (sdup@kth.se) — MIT License.

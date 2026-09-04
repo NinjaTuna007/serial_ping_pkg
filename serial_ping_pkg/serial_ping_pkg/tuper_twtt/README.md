@@ -83,7 +83,8 @@ over the modem (through the driver).
 - The matched reply contains `T<travel_time>`; distance =
   `0.00003125 * sound_velocity * travel_time`.
 - Sends `$B<n>{lat},{lon},{dist}` to the driver over `succorfish/tx`
-  (the driver appends the line terminator).
+  (the driver appends the line terminator). Lat/lon are 7 decimal places and
+  `dist` is centimetres (`on_air`).
 - In `is_slave` mode it instead waits for an incoming `#B` broadcast line,
   received via the `succorfish/rx` callback, before pinging.
 

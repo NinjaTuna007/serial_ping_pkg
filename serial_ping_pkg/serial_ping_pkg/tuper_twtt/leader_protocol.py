@@ -11,20 +11,23 @@ including the two commas)::
 
     $B<num_chars><lat>,<lon>,<dist>
 
-The length field is computed from the *string* forms of the values exactly as
-the leader emits them, so the encoder and the on-wire bytes stay consistent.
+The length field is computed from the formatted payload so the encoder and the
+on-wire bytes stay consistent. Lat/lon use ``on_air.LATLON_DECIMALS``; ``dist``
+uses ``on_air.RANGE_DECIMALS``.
 """
+
+from serial_ping_pkg.common.on_air import format_latlon, format_range
 
 
 def build_position_broadcast(lat, lon, dist):
     """Build the leader's ``$B`` position+distance frame (no trailing CRLF).
 
-    The numeric length prefix counts the payload characters (the stringified
-    ``lat``/``lon``/``dist`` plus the two separating commas). The caller appends
-    ``\\r\\n`` before writing to the modem.
+    The numeric length prefix counts the payload characters (formatted
+    ``lat,lon,dist`` including the two separating commas). The caller appends
+    CRLF before writing to the modem.
     """
-    num_chars = len(str(lat)) + len(str(lon)) + len(str(dist)) + 2
-    return f"$B{num_chars}{lat},{lon},{dist}"
+    payload = f'{format_latlon(lat, lon)},{format_range(dist)}'
+    return f'$B{len(payload)}{payload}'
 
 
 def parse_position_distance(line):

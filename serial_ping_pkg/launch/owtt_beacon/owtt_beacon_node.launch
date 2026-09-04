@@ -46,7 +46,7 @@
     <arg name="bt_name_only" default="true" description="Keep only the action-client name, drop the status"/>
     <arg name="bt_basename" default="true" description="Keep only the last path segment of the bt name"/>
     <arg name="bt_strip_prefix" default="A_" description="Strip this leading prefix from the bt name"/>
-    <arg name="position_precision" default="6" description="Decimal places for lat/lon in the payload"/>
+    <arg name="position_precision" default="7" description="Decimal places for lat/lon in the payload (on_air.LATLON_DECIMALS)"/>
     <arg name="max_bt_len" default="32" description="Cap on bt text length (acoustic bandwidth)"/>
     <arg name="max_onair_bytes" default="64" description="Modem packet cap; TEL:payload trimmed to fit"/>
     <arg name="send_period_s" default="1.0" description="How often telemetry is pushed to the Teensy"/>

@@ -48,7 +48,7 @@ def test_encode_matches_documented_format():
     payload = encode_telemetry(
         ['position', 'depth', 'svs', 'speed', 'bt'],
         position=(58.823229, 17.635998), depth=12.3, svs=1481.6, speed=1.20, bt='move_to')
-    assert payload == "P58.823229,17.635998;D12.3;C1481.6;S1.20;Bmove_to"
+    assert payload == 'P58.8232290,17.6359980;D12.30;C1481.6;S1.20;Bmove_to'
 
 
 def test_encode_decode_round_trip():
@@ -91,8 +91,8 @@ def test_strip_marker_after_envelope_unwrap():
 def test_payload_budget_drops_bt_keeps_position():
     """When over budget the free-text bt is sacrificed; position is preserved."""
     payload = encode_telemetry(
-        ['position', 'bt'], position=(1.0, 2.0), bt='X' * 40, max_payload_len=18)
-    assert payload == "P1.000000,2.000000"
+        ['position', 'bt'], position=(1.0, 2.0), bt='X' * 40, max_payload_len=22)
+    assert payload == 'P1.0000000,2.0000000'
     assert 'B' not in payload
 
 

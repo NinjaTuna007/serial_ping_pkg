@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!-- USB Delphis / NM3 only. Starts succorfish_driver (9600 / ttyUSB) and pings one remote id.
+
+     ros2 launch serial_ping_pkg delphis_ping.launch ping_command:=$P007
+     ros2 launch serial_ping_pkg delphis_ping.launch serial_port:=/dev/ttyUSB0 ping_command:=$P002
+-->
+<launch>
+    <arg name="robot_name" default="delphis" description="Name used in the published distance topic"/>
+    <arg name="ping_command" default="$P002" description="Succorfish ping command ($P plus 3-digit modem id)"/>
+    <arg name="timer_period" default="1.0" description="Seconds between pings"/>
+    <arg name="serial_port" default="" description="USB serial device (empty = /dev/ttyUSB0 from the succorfish profile)"/>
+    <arg name="driver_backend" default="serial" description="Driver backend: serial, test, or unity"/>
+    <arg name="sound_velocity" default="1500.0" description="Sound velocity in m/s"/>
+    <arg name="timeout_threshold" default="5.0" description="Per-ping reply timeout in seconds"/>
+    <arg name="distance_topic_suffix" default="distance" description="Suffix for /{robot_name}/{suffix}"/>
+
+    <include file="$(find-pkg-share serial_ping_pkg)/launch/common/single_target_ping_node.launch">
+        <arg name="robot_name" value="$(var robot_name)"/>
+        <arg name="ping_command" value="$(var ping_command)"/>
+        <arg name="timer_period" value="$(var timer_period)"/>
+        <arg name="distance_topic_suffix" value="$(var distance_topic_suffix)"/>
+        <arg name="sound_velocity" value="$(var sound_velocity)"/>
+        <arg name="timeout_threshold" value="$(var timeout_threshold)"/>
+        <arg name="start_driver" value="true"/>
+        <arg name="driver_profile" value="succorfish"/>
+        <arg name="serial_port" value="$(var serial_port)"/>
+        <arg name="driver_backend" value="$(var driver_backend)"/>
+    </include>
+</launch>

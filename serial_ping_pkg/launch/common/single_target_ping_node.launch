@@ -10,9 +10,13 @@
     <arg name="start_driver" default="false" description="Also launch succorfish_driver in the same namespace"/>
     <arg name="driver_profile" default="succorfish" description="Driver profile: succorfish (9600/ttyUSB) or teensy (115200/ttyACM)"/>
     <arg name="driver_namespace" default="" description="Namespace for the driver (must match this node's namespace)"/>
+    <arg name="serial_port" default="" description="Override driver serial.port (empty = profile YAML, usually /dev/ttyUSB0)"/>
+    <arg name="driver_backend" default="serial" description="Driver backend: serial, test, or unity"/>
     <include file="$(find-pkg-share succorfish_driver)/launch/succorfish_driver.launch.py" if="$(var start_driver)">
         <arg name="profile" value="$(var driver_profile)"/>
         <arg name="namespace" value="$(var driver_namespace)"/>
+        <arg name="serial_port" value="$(var serial_port)"/>
+        <arg name="backend" value="$(var driver_backend)"/>
     </include>
     <arg name="sound_velocity" default="1500.0" description="Sound velocity in m/s"/>
     <arg name="timeout_threshold" default="5.0" description="Timeout threshold in seconds"/>

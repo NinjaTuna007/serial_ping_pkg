@@ -30,17 +30,15 @@ from full_stack_harness import (
 # --------------------------------------------------------------------------- #
 
 def test_build_position_broadcast_length_prefix():
-    """The byte count covers the stringified values plus the two commas."""
+    """The byte count covers the formatted values plus the two commas."""
     frame = build_position_broadcast(59.1, 18.8, 468.75)
-    # len("59.1") + len("18.8") + len("468.75") + 2 == 16
-    assert frame == "$B1659.1,18.8,468.75"
+    assert frame == '$B2859.1000000,18.8000000,468.75'
 
 
 def test_build_position_broadcast_counts_dynamically():
     """The prefix tracks the actual lengths of the values."""
     frame = build_position_broadcast(1.0, 2.0, 3.0)
-    # len("1.0") * 3 + 2 commas == 11
-    assert frame == "$B111.0,2.0,3.0"
+    assert frame == '$B241.0000000,2.0000000,3.00'
 
 
 # --------------------------------------------------------------------------- #

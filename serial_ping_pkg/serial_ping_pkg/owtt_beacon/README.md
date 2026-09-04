@@ -305,7 +305,7 @@ overridable as a launch argument.
 | `bt_name_only`                                   | `true`                                                 | keep only the action-client name, drop `(Status.RUNNING)`            |
 | `bt_basename`                                    | `true`                                                 | keep only the last path segment (`/lolo/move_to`→`move_to`)          |
 | `bt_strip_prefix`                                | `A_`                                                   | strip this leading prefix from the bt name (`A_Chilling`→`Chilling`) |
-| `position_precision`                             | `6`                                                    | lat/lon decimals in payload                                          |
+| `position_precision`                             | `7`                                                    | lat/lon decimals in payload (`on_air.LATLON_DECIMALS`)               |
 | `max_bt_len`                                     | `32`                                                   | bt text cap (acoustic bandwidth)                                     |
 | `max_onair_bytes`                                | `64`                                                   | modem packet cap; `TEL:`+payload auto-trimmed to fit                 |
 | `send_period_s`                                  | `1.0`                                                  | **telemetry broadcast interval** (how often `$K` is pushed)          |

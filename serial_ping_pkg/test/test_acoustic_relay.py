@@ -23,27 +23,27 @@ from full_stack_harness import DRIVER_AVAILABLE, Stack, exe, wait_until
 # --------------------------------------------------------------------------- #
 
 def test_build_basic_frame():
-    """lat/lon at 8dp, depth as ,DDD.D, heading as ,DDD, with byte count."""
+    """lat/lon at 7dp, depth as ,DDD.DD, heading as ,DDD, with byte count."""
     frame = build_pos_broadcast(59.12345678, 18.87654321, 42.5, 270)
-    assert frame == "$B3359.12345678,18.87654321,042.5,270"
+    assert frame == '$B3259.1234568,18.8765432,042.50,270'
 
 
 def test_build_zero_pads_depth_and_heading():
     """Zero depth/heading still occupy the fixed field widths."""
     frame = build_pos_broadcast(1.0, 2.0, 0.0, 0)
-    assert frame == "$B311.00000000,2.00000000,000.0,000"
+    assert frame == '$B301.0000000,2.0000000,000.00,000'
 
 
 def test_build_clamps_high_values():
-    """Depth clamps to 999.9 and heading to 359."""
+    """Depth clamps to 999.99 and heading to 359."""
     frame = build_pos_broadcast(1.0, 2.0, 1500.0, 400)
-    assert frame.endswith(",999.9,359")
+    assert frame.endswith(',999.99,359')
 
 
 def test_build_clamps_negative_values():
     """Negative depth/heading clamp to zero."""
     frame = build_pos_broadcast(1.0, 2.0, -5.0, -10)
-    assert frame.endswith(",000.0,000")
+    assert frame.endswith(',000.00,000')
 
 
 # --------------------------------------------------------------------------- #
@@ -148,7 +148,7 @@ def test_smarc_pos_broadcast_node_emits_frame():
         msg.longitude = 18.8
         pub.publish(msg)
         time.sleep(0.5)
-        saw = any(c.startswith('$B') and '59.10000000' in c for c in st.fake.commands())
+        saw = any(c.startswith('$B') and '59.1000000' in c for c in st.fake.commands())
     node_out, _ = st.stop()
     assert saw, f"no $B position frame broadcast; got {st.fake.commands()!r}\n{node_out}"
 
@@ -165,7 +165,7 @@ def test_smarc_pos_receiver_node_publishes_position():
     got = st.probe.collect(GeoPoint, '/relay_lolo/smarc/latlon')
     st.start_node(exe('smarc_pos_receiver_node'))
     time.sleep(1.5)
-    data = '59.10000000,18.80000000,012.3,270'
+    data = '59.1000000,18.8000000,012.30,270'
     st.fake.inject(f'#B007{len(data):02d}{data}')
     ok = wait_until(lambda: len(got) > 0, timeout=8)
     node_out, _ = st.stop()

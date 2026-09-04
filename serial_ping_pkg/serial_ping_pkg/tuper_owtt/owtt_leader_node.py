@@ -294,7 +294,7 @@ class OwttLeaderNode(WireSafeSerialNode):
         lat = self.latest_position.latitude
         lon = self.latest_position.longitude
         modem_lat, modem_lon = self._apply_offset(lat, lon)
-        cmd = ti.build_gps_command(f"{modem_lat:.8f}", f"{modem_lon:.8f}")
+        cmd = ti.build_gps_command(modem_lat, modem_lon)
         try:
             self.send_command(cmd)
         except Exception as e:

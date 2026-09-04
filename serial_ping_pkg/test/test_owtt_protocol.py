@@ -61,8 +61,8 @@ def test_config_command_zero_pads_ids():
 
 
 def test_gps_command():
-    """GPS update is ``$G<lat>,<lon>``."""
-    assert ti.build_gps_command('59.1', '18.8') == '$G59.1,18.8'
+    """GPS update is ``$G<lat>,<lon>`` at ``on_air.LATLON_DECIMALS``."""
+    assert ti.build_gps_command(59.1, 18.8) == '$G59.1000000,18.8000000'
 
 
 def test_parse_broadcast_latlon():

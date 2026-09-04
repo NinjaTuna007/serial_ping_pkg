@@ -20,7 +20,9 @@ wraps these topics/service for the nodes here.
 
 Shared, hardware-free wire-format helpers live in `ping_protocol.py`
 (`travel_time_to_distance`, `ping_response_complete`, `parse_ping_distance`,
-`parse_leader_broadcast`) and are unit-tested in `test/test_common_protocol.py`.
+`parse_leader_broadcast`) and `on_air.py` (on-air decimal places for lat/lon,
+depth, heading, range, svs, speed). They are unit-tested in
+`test/test_common_protocol.py` and `test/test_on_air.py`.
 
 ---
 
@@ -79,7 +81,8 @@ Subscribes to `/<robot_name>/smarc/latlon` (cached only) and publishes
 `/<robot_name>/<distance_topic_suffix>` (`std_msgs/Float32`). Like
 `serial_ping_node`, it pings via the driver's `succorfish/send_command` service
 with an in-flight guard. Bare run:
-`ros2 run serial_ping_pkg single_target_ping_node`.
+`ros2 run serial_ping_pkg single_target_ping_node`. USB Delphis getting-started
+(driver + this node): `ros2 launch serial_ping_pkg delphis_ping.launch`.
 
 ### `serial_broadcast_receiver` (generic leader-broadcast receiver)
 

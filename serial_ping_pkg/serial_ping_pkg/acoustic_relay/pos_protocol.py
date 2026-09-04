@@ -12,25 +12,29 @@ including the field-separating commas)::
     outbound: $B<num_chars><lat>,<lon>,<depth>,<heading>
     inbound:  #B<modem_id(3)><num_chars(2)><lat>,<lon>[,<depth>[,<heading>]]
 
-``lat``/``lon`` use 8 decimal places, ``depth`` is ``DDD.D`` (5 chars, clamped
-to [0, 999.9]) and ``heading`` is ``DDD`` (3 chars, clamped to [0, 359]).
+``lat``/``lon`` use ``on_air.LATLON_DECIMALS`` (7), ``depth`` is zero-padded
+``DDD.DD`` (clamped to [0, 999.99]) and ``heading`` is ``DDD`` (clamped to
+[0, 359]). See ``serial_ping_pkg.common.on_air``.
 """
+
+from serial_ping_pkg.common.on_air import (
+    format_depth_padded,
+    format_heading,
+    format_latlon,
+)
 
 
 def build_pos_broadcast(lat, lon, depth, heading):
     """Build the outbound ``$B`` position broadcast frame (no trailing CRLF).
 
-    ``depth`` is clamped to [0.0, 999.9] and formatted as ``DDD.D``; ``heading``
-    is rounded/clamped to the integer range [0, 359] and formatted as ``DDD``.
-    The caller appends ``\\r\\n`` before writing to the modem.
+    Depth and heading are clamped and width-padded via ``on_air``. The caller
+    appends CRLF before writing to the modem.
     """
-    data = f"{lat:.8f},{lon:.8f}"
-    depth_val = max(0.0, min(float(depth), 999.9))
-    depth_str = f",{depth_val:05.1f}"
-    heading_val = max(0, min(int(heading), 359))
-    heading_str = f",{heading_val:03d}"
+    data = format_latlon(lat, lon)
+    depth_str = ',' + format_depth_padded(depth)
+    heading_str = ',' + format_heading(heading)
     n_chars = len(data) + len(depth_str) + len(heading_str)
-    return f"$B{n_chars}{data}{depth_str}{heading_str}"
+    return f'$B{n_chars}{data}{depth_str}{heading_str}'
 
 
 def parse_pos_broadcast(line):
