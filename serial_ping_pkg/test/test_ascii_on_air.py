@@ -1,13 +1,13 @@
-"""Tests for the shared on-air ASCII decimal catalog.
+"""Tests for the ASCII on-air decimal catalog.
 
-Exercises ``serial_ping_pkg.common.on_air`` directly (no ROS, no hardware):
+Exercises ``serial_ping_pkg.common.ascii_on_air`` directly (no ROS, no hardware):
 constants, formatters, clamping, and that the centimetre-scale position axes
-share one grain.
+share one grain. DCCL bounds are in ``proto/dccl_acoustic.proto``, not here.
 """
 
 import pytest
 
-from serial_ping_pkg.common.on_air import (
+from serial_ping_pkg.common.ascii_on_air import (
     DEPTH_DECIMALS,
     DEPTH_MAX,
     HEADING_DECIMALS,
@@ -46,7 +46,7 @@ def test_format_latlon_precision_override():
 
 
 def test_format_depth_unpadded_and_padded():
-    """Beacon depth is unpadded; relay depth is DDD.DD."""
+    """Beacon ASCII depth is unpadded; relay depth is DDD.DD."""
     assert format_depth(12.3) == '12.30'
     assert format_depth_padded(42.5) == '042.50'
     assert format_depth_padded(0.0) == '000.00'

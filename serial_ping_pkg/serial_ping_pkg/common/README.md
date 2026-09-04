@@ -20,11 +20,17 @@ They talk to the modem through `succorfish_driver` over ROS.
 A thin helper, `serial_ping_pkg/common/driver_client.py` (`DriverClient`),
 wraps these topics/service for the nodes here.
 
-Shared, hardware-free wire-format helpers live in `ping_protocol.py`
-(`travel_time_to_distance`, `ping_response_complete`, `parse_ping_distance`,
-`parse_leader_broadcast`) and `on_air.py` (on-air decimal places for lat/lon,
-depth, heading, range, svs, speed). They are unit-tested in
-`test/test_common_protocol.py` and `test/test_on_air.py`.
+Shared, hardware-free wire-format helpers:
+
+| File | Role |
+|------|------|
+| `ping_protocol.py` | ping travel-time / leader-broadcast parse |
+| [`ascii_on_air.py`](ascii_on_air.py) | ASCII decimal catalog (`$G`, relay/TWTT `$B`, `codec:=ascii`) |
+| [`dccl_codec.py`](dccl_codec.py) | libdccl `pack`/`unpack` + CRC-8-ATM |
+| [`dccl_acoustic_pb2.py`](dccl_acoustic_pb2.py) | generated stubs — do not edit |
+| [`../../proto/dccl_acoustic.proto`](../../proto/dccl_acoustic.proto) | DCCL schema (`beacon.codec:=dccl`) |
+
+See [`proto/README.md`](../../proto/README.md) for the codec map.
 
 ---
 

@@ -80,10 +80,10 @@ def build_config_command(mode, own_modem_id, listen_for_modem_id="000",
 def build_gps_command(lat, lon, prefix="$G"):
     """Build the ``$G<lat>,<lon>`` command that updates the transmitter's GPS.
 
-    Lat/lon are formatted with ``on_air.LATLON_DECIMALS``. The Teensy stores the
+    Lat/lon are formatted with ``ascii_on_air.LATLON_DECIMALS``. The Teensy stores the
     substring after ``$G`` and puts it on air unchanged.
     """
-    from serial_ping_pkg.common.on_air import format_latlon
+    from serial_ping_pkg.common.ascii_on_air import format_latlon
     return f'{prefix}{format_latlon(lat, lon)}'
 
 
@@ -214,19 +214,22 @@ def unwrap_timestamp_envelope(data):
 
 
 def build_telemetry_command(payload, prefix="$K"):
-    """Build the ``$K<payload>`` telemetry-update command for the transmitter.
+    """Build ``$K<nn><payload>`` for the transmitter.
 
-    ``$K`` is used (not ``$T``) because ``$T`` is an existing Succorfish modem
-    command; the host->Teensy prefix must not collide with it. The Teensy
-    stores ``payload`` with a leading ``TEL:`` marker and broadcasts it as
-    ``$Bnn TEL:<payload>`` on its PPS schedule, so receivers see
-    ``#B<id><nn>TEL:<payload>``.
+    ``$K`` is used (not ``$T``) because ``$T`` is a Succorfish modem command.
+    ``nn`` is the two-digit byte length of ``payload`` (same rule as ``$B``),
+    so a DCCL blob may contain CR/LF/NUL. The Teensy stores this with a
+    leading ``TEL:`` marker and broadcasts it on the PPS schedule.
 
-    ``payload`` is opaque, host-encoded telemetry (see
-    ``owtt_beacon.beacon_telemetry``); it must NOT include the ``TEL:`` marker
-    (the firmware adds it) and must be free of CR/LF.
+    ``payload`` must NOT include the ``TEL:`` marker. ``bytes`` return
+    ``bytes`` (caller uses ``write_bytes``); an all-ASCII ``str`` still
+    returns ``str`` for the old newline path, but prefer ``bytes``.
     """
-    return f"{prefix}{payload}"
+    raw = _as_bytes(payload)
+    cmd = prefix.encode('ascii') + f'{len(raw):02d}'.encode('ascii') + raw
+    if isinstance(payload, str) and application_as_text(raw) is not None:
+        return cmd.decode('ascii')
+    return cmd
 
 
 def build_broadcast_command(data, prefix="$B"):

@@ -48,6 +48,7 @@
     <arg name="unit_latlon_topic" default="" description="Override own position topic"/>
     <arg name="commander" default="false" description="Exactly one unit true: only it transmits acoustic START/STOP"/>
     <arg name="beacon_name" default="lolo" description="Beacon being tracked"/>
+    <arg name="codec" default="dccl" description="Telemetry codec after TEL: dccl (default) or ascii; must match the beacon"/>
     <arg name="beacon_modem_id" default="101" description="Beacon modem id; empty = accept any telemetry frame"/>
     <arg name="start_keyword" default="START" description="Acoustic START keyword (must match the beacon)"/>
     <arg name="stop_keyword" default="STOP" description="Acoustic STOP keyword (must match the beacon)"/>
@@ -85,6 +86,7 @@
         <param name="surface_unit.latlon_topic" type="str" value="$(var unit_latlon_topic)"/>
         <param name="surface_unit.commander" value="$(var commander)"/>
         <param name="beacon.name" type="str" value="$(var beacon_name)"/>
+        <param name="beacon.codec" type="str" value="$(var codec)"/>
         <param name="beacon.modem_id" type="str" value="$(var beacon_modem_id)"/>
         <param name="beacon.start_keyword" type="str" value="$(var start_keyword)"/>
         <param name="beacon.stop_keyword" type="str" value="$(var stop_keyword)"/>

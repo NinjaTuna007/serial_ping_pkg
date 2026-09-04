@@ -3,7 +3,8 @@
 A surface unit listens (Teensy in *receiver* mode) for the beacon's telemetry
 broadcasts. For each telemetry frame it:
 
-  1. decodes the compact telemetry payload (``beacon_telemetry``),
+  1. decodes the telemetry payload with ``beacon.codec`` (default ``dccl``;
+     set ``ascii`` for tagged ``TEL:`` bags — must match the beacon),
   2. turns the paired ``#I<delta_us>`` line into a one-way-travel-time range::
 
          range = (delta_us - offset_us) * 1e-6 * sound_velocity
@@ -83,6 +84,7 @@ class SurfaceUnitNode(WireSafeSerialNode):
         # Every unit still listens for the beacon's OK and relays it to MQTT.
         self.declare_parameter('surface_unit.commander', unit_cfg.get('commander', False))
         self.declare_parameter('beacon.name', beacon_cfg.get('name', 'lolo'))
+        self.declare_parameter('beacon.codec', beacon_cfg.get('codec', bt_codec.DEFAULT_CODEC))
         # If set, only telemetry frames from this modem id are accepted. Empty =
         # accept any telemetry frame (single-beacon deployments).
         self.declare_parameter('beacon.modem_id', beacon_cfg.get('modem_id', ''), id_desc)
@@ -124,6 +126,12 @@ class SurfaceUnitNode(WireSafeSerialNode):
         self.unit_latlon_topic = self.get_parameter('surface_unit.latlon_topic').get_parameter_value().string_value
         self.is_commander = self.get_parameter('surface_unit.commander').get_parameter_value().bool_value
         self.beacon_name = self.get_parameter('beacon.name').get_parameter_value().string_value
+        self.telemetry_codec = bt_codec.require_codec_runtime(
+            self.get_parameter('beacon.codec').get_parameter_value().string_value)
+        self.get_logger().info(
+            f"Telemetry codec: {self.telemetry_codec}"
+            + (" (DCCL+CRC-8)" if self.telemetry_codec == bt_codec.CODEC_DCCL
+               else " (tagged ASCII)"))
         beacon_modem_raw = self.get_parameter('beacon.modem_id').value
         self.beacon_modem_id = ti.normalize_modem_id(beacon_modem_raw) if beacon_modem_raw not in (None, '') else ''
         self.start_keyword = self.get_parameter('beacon.start_keyword').get_parameter_value().string_value
@@ -175,7 +183,9 @@ class SurfaceUnitNode(WireSafeSerialNode):
             Float32, f"/{self.unit_name}/owtt_beacon/{self.beacon_name}/range", 10)
         self.telemetry_pub = self.create_publisher(
             String, f"/{self.unit_name}/owtt_beacon/{self.beacon_name}/telemetry", 10)
-        # JSON range report, also usable via str_json_mqtt_bridge if preferred.
+        # JSON range report (includes decoded telemetry). Same payload goes to
+        # MQTT; that is what the inference node json.loads. The ROS copy is for
+        # bags / Foxglove on the surface vehicle.
         self.report_pub = self.create_publisher(
             String, f"/{self.unit_name}/owtt_beacon/range_report", 10)
 
@@ -317,17 +327,12 @@ class SurfaceUnitNode(WireSafeSerialNode):
         if broadcast is not None:
             modem_id, payload_data = broadcast
             text = ti.application_as_text(payload_data)
-            if text is None:
-                return
-            payload_data = text
-            # The beacon's OK ack to a START/STOP command -> relay to MQTT.
-            if payload_data.strip() == self.ack_message and \
+            if text is not None and text.strip() == self.ack_message and \
                     (not self.beacon_modem_id or modem_id == self.beacon_modem_id):
                 self._on_beacon_ack(modem_id)
                 return
             telem_payload = bt_codec.strip_marker(payload_data, ti.TELEMETRY_MARKER)
             if telem_payload is None:
-                # Not a telemetry frame (e.g. plain lat,lon); ignore here.
                 self.pending = None
                 return
             if self.beacon_modem_id and modem_id != self.beacon_modem_id:
@@ -335,7 +340,16 @@ class SurfaceUnitNode(WireSafeSerialNode):
                     f"Telemetry from modem {modem_id} != beacon {self.beacon_modem_id}; ignoring.")
                 self.pending = None
                 return
-            telemetry = bt_codec.decode_telemetry(telem_payload)
+            telemetry = bt_codec.decode_telemetry(
+                telem_payload, codec=self.telemetry_codec)
+            if telemetry is None:
+                why = ('ASCII decode failed' if self.telemetry_codec == bt_codec.CODEC_ASCII
+                       else 'CRC-8 / DCCL decode failed')
+                self.get_logger().warn(
+                    f"Dropping telemetry frame ({why}).",
+                    throttle_duration_sec=5.0)
+                self.pending = None
+                return
             self.pending = {'modem_id': modem_id, 'telemetry': telemetry}
             self._publish_telemetry(telemetry)
             return
@@ -348,6 +362,7 @@ class SurfaceUnitNode(WireSafeSerialNode):
         self.get_logger().debug(f"<- Teensy (unhandled): {line}")
 
     def _publish_telemetry(self, telemetry):
+        """Foxglove / ros2 echo only. Inference reads MQTT range-report JSON."""
         msg = String()
         msg.data = json.dumps(self._jsonable_telemetry(telemetry))
         self.telemetry_pub.publish(msg)

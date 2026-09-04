@@ -49,7 +49,7 @@ from smarc_action_base.gentler_action_server import GentlerActionServer
 from smarc_utilities.georef_utils import convert_latlon_to_utm
 
 from serial_ping_pkg.utils import load_yaml_config
-from serial_ping_pkg.common.on_air import LATLON_DECIMALS
+from serial_ping_pkg.common.ascii_on_air import LATLON_DECIMALS
 from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, spin_wire_safe
 from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 

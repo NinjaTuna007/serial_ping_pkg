@@ -12,12 +12,12 @@ including the field-separating commas)::
     outbound: $B<num_chars><lat>,<lon>,<depth>,<heading>
     inbound:  #B<modem_id(3)><num_chars(2)><lat>,<lon>[,<depth>[,<heading>]]
 
-``lat``/``lon`` use ``on_air.LATLON_DECIMALS`` (7), ``depth`` is zero-padded
+``lat``/``lon`` use ``ascii_on_air.LATLON_DECIMALS`` (7), ``depth`` is zero-padded
 ``DDD.DD`` (clamped to [0, 999.99]) and ``heading`` is ``DDD`` (clamped to
-[0, 359]). See ``serial_ping_pkg.common.on_air``.
+[0, 359]). See ``serial_ping_pkg.common.ascii_on_air``.
 """
 
-from serial_ping_pkg.common.on_air import (
+from serial_ping_pkg.common.ascii_on_air import (
     format_depth_padded,
     format_heading,
     format_latlon,
@@ -27,7 +27,7 @@ from serial_ping_pkg.common.on_air import (
 def build_pos_broadcast(lat, lon, depth, heading):
     """Build the outbound ``$B`` position broadcast frame (no trailing CRLF).
 
-    Depth and heading are clamped and width-padded via ``on_air``. The caller
+    Depth and heading are clamped and width-padded via ``ascii_on_air``. The caller
     appends CRLF before writing to the modem.
     """
     data = format_latlon(lat, lon)

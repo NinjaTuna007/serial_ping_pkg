@@ -1,13 +1,18 @@
-"""On-air ASCII decimal-place catalog (acoustic wire only).
+"""ASCII on-air decimal catalog (not DCCL).
 
-ROS messages stay full precision (``GeoPoint`` float64, ``Float32``, …). These
-constants and formatters are the single source of truth for how numbers are
-printed onto ``$G``, ``$B``, and ``TEL:`` payloads.
+Used by ``$G``, relay/TWTT ``$B``, and ``beacon.codec:=ascii`` ``TEL:`` bags.
+ROS messages stay full precision (``GeoPoint`` float64, ``Float32``, …).
+
+DCCL bit layout is ``serial_ping_pkg/proto/dccl_acoustic.proto`` (packed by
+``dccl_codec.py``). Do not copy min/max from here into that proto.
 
 At 59 N, ``LATLON_DECIMALS=7`` is ~1 cm in latitude (~0.6 cm in longitude),
 matching ``DEPTH_DECIMALS=2`` (1 cm) so the three position axes share one grain.
 ``RANGE_DECIMALS`` and ``SPEED_DECIMALS`` use the same centimetre scale. SVS is
 not a position axis and stays one decimal place.
+
+Relay ``format_depth_padded`` is a fixed ``DDD.DD`` field (max 999.99 m). That
+width is the relay ASCII frame, not the DCCL depth cap (3 km).
 """
 
 LATLON_DECIMALS = 7   # degrees; ~1 cm at 59 N

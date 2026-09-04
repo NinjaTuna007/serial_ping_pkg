@@ -20,55 +20,50 @@ beacon, publishing a `sensor_msgs/NavSatFix` for visualisation (e.g. Foxglove).
 ## Data flow
 
 1. **Beacon** subscribes to its telemetry sources, encodes the enabled fields
-  (default: bt tip only) into a compact payload, and sends `$K<payload>` to its
-   Teensy (transmitter mode). The Teensy prepends the `TEL:` telemetry marker and
-   broadcasts `$BnnTEL:<payload>` on its PPS/OCXO schedule.
+  (default: bt tip only) into a compact payload, and sends `$K<nn><payload>` to
+   its Teensy (transmitter mode). The Teensy prepends the `TEL:` telemetry marker
+   and broadcasts `$BnnTEL:<payload>` on its PPS/OCXO schedule.
 2. **Surface units** (receiver mode) get the relayed broadcast
-  `#B<id><nn>TEL:<payload>` followed by the timing line `#I<delta_us>`. They decode
-   the telemetry, compute `range = (delta_us - offset_us) * 1e-6 * c`, publish
-   the range on ROS, and publish a JSON range report to MQTT.
-3. **Inference node** keeps the latest report per surface unit and triangulates
-  the beacon from two units' positions + ranges (two-circle intersection),
-   publishing the estimate as `NavSatFix`.
+  `#B<id><nn>TEL:<payload>` followed by the timing line `#I<delta_us>`. They
+   decode the telemetry **in memory** (a Python dict — they do not parse their
+   own ROS JSON topic to compute range). They compute
+   `range = (delta_us - offset_us) * 1e-6 * c`, publish range on ROS, and
+   publish a JSON **range report** (own GPS + range + that dict) to MQTT.
+3. **Inference node** does **not** subscribe to the surface ROS telemetry
+   String. It `json.loads` the MQTT range reports and reads the embedded
+   `telemetry` object (depth, optional GPS seed, svs already applied on the
+   surface). It republishes a JSON String on `/owtt_beacon/<beacon>/telemetry`
+   for Foxglove.
 
 ## Telemetry frame
 
-The payload after the Teensy's `TEL:` marker is a terse, `;`-separated, tagged
-list (see `beacon_telemetry.py`). Only enabled fields with a value are sent:
+The payload after the Teensy's `TEL:` marker is chosen by `beacon.codec`
+(beacon and surface unit must match):
 
+| `beacon.codec` | After `TEL:` | Needs |
+|----------------|--------------|-------|
+| `dccl` (default) | `libdccl` `BeaconTelemetry` (id 124) + CRC-8-ATM trailer | `python3-dccl4` |
+| `ascii` | tagged `P<lat>,<lon>;D<m>;C<svs>;S<speed>;B<bt>` | nothing extra |
 
-| tag | field    | encoding                                        |
-| --- | -------- | ----------------------------------------------- |
-| `P` | position | `P<lat>,<lon>`                                  |
-| `D` | depth    | `D<m>` (metres, +down)                          |
-| `C` | svs      | `C<m/s>` (sound velocity from the beacon's SVS) |
-| `S` | speed    | `S<m/s>`                                        |
-| `B` | bt tip   | `B<text>` (sanitised, length-capped, name-only) |
+Schema: [`proto/dccl_acoustic.proto`](../../proto/dccl_acoustic.proto) (map:
+[`proto/README.md`](../../proto/README.md)). Optional fields match the old tags
+(lat/lon, depth 0–3000 m, svs, speed, bt). DCCL bounds live in that proto;
+ASCII decimals are `ascii_on_air.py` (relay padded `DDD.DD` is still 999.99 m).
+There is **no auto-fallback**: a DCCL receiver drops tagged ASCII, and an ASCII
+receiver drops a DCCL blob.
 
+Decoded fields stay a Python dict. The surface unit does **not** invent a ROS
+`.msg` for them. It publishes JSON `std_msgs/String` for humans/Foxglove; the
+inference hop consumes the same object inside the MQTT range-report JSON.
 
-Example (`position,depth,svs,speed,bt`), as broadcast: `TEL:P58.823229,17.635998;D12.3;C1481.6;S1.20;BChilling`
+START/STOP/OK stay ASCII keywords (they are already tiny).
 
-Enable `svs` so the **surface units convert travel-time to range with the
-beacon's in-situ sound velocity** instead of a frozen default — the beacon reads
-it from its own SVS sensor (`owtt.sound_velocity_*`). When a report's telemetry
-carries `svs`, the surface unit uses it (and tags the report
-`sound_velocity_src: beacon`); otherwise it falls back to its own SVS topic /
-`owtt.default_sound_velocity` (`sound_velocity_src: local`).
-
-Enable `depth` when the beacon dives: the surface units measure a **slant**
-range, and the inference node uses the broadcast depth to recover the horizontal
-range it triangulates with (else it falls back to `inference.assumed_depth_m`).
-
-Keep it small — the Succorfish NM3 caps a packet at **64 bytes** (`TEL:` + the
-payload). The beacon enforces this via `max_onair_bytes`: if the encoded payload
-would overflow, it trims the free-text `bt` first (truncate → drop), then drops
-`speed`/`depth`/`svs`, always preserving `position`; a throttled warning tells
-you when it trims. To save bytes the `bt` tip is reduced to just the action-client
-name (`bt_name_only`, dropping `(Status.RUNNING)`), reduced to the last path
-segment of the topic-like action name (`bt_basename`, `/lolo/move_to` →
-`move_to`), with the `A_` prefix stripped (`bt_strip_prefix`), e.g.
-`A_Chilling (Status.RUNNING)` → `Chilling`. The **default field set is `bt`
-only**.
+Keep it small — the Succorfish NM3 caps a packet at **64 bytes** (timestamp
+envelope + `TEL:` + DCCL + CRC-8). The beacon enforces this via
+`max_onair_bytes`. To save bytes the `bt` tip is reduced to the action-client
+name (`bt_name_only`), last path segment (`bt_basename`), with `A_` stripped
+(`bt_strip_prefix`). Proto `max_length` for `bt` is 16. The **default field
+set is `bt` only**.
 
 > Firmware note: `$K` is the host→Teensy command prefix (it would collide with
 > the modem's own `$T`), while `TEL:` is the on-air payload marker the receivers
@@ -153,9 +148,12 @@ broadcast `svs`** (from telemetry) and only falls back to its local SVS topic /
 Publishes:
 
 - `/<unit_name>/owtt_beacon/<beacon>/range` (`std_msgs/Float32`)
-- `/<unit_name>/owtt_beacon/<beacon>/telemetry` (`std_msgs/String` JSON)
-- `/<unit_name>/owtt_beacon/range_report` (`std_msgs/String` JSON)
-- MQTT `→ <topic_prefix>/<beacon>/range/<unit_name>` (same JSON report)
+- `/<unit_name>/owtt_beacon/<beacon>/telemetry` (`std_msgs/String` JSON of the
+  decoded dict — **viz / `ros2 topic echo` only**; inference does not subscribe)
+- `/<unit_name>/owtt_beacon/range_report` (`std_msgs/String` JSON of the full
+  report, including `telemetry`)
+- MQTT `→ <topic_prefix>/<beacon>/range/<unit_name>` (same JSON as `range_report`;
+  **this** is what inference `json.loads`)
 
 It also takes part in the **command channel** (see *Command orchestration*):
 it subscribes MQTT `<topic_prefix>/<beacon>/cmd`, and — if `commander:=true` —
@@ -171,7 +169,8 @@ Subscribes MQTT `<topic_prefix>/<beacon>/range/+` (range reports) and
 - `/owtt_beacon/<beacon>/estimate_alt` (`NavSatFix`) — mirror fix (2-receiver case, if `publish_both`)
 - `/owtt_beacon/<beacon>/reported` (`NavSatFix`) — beacon's self-reported pos (if telemetry carries position)
 - `/owtt_beacon/<beacon>/receiver/<unit>` (`NavSatFix`) — each surface receiver's own GPS, read from MQTT and re-published (one per reporting unit, independent of whether a usable range exists)
-- `/owtt_beacon/<beacon>/telemetry` (`std_msgs/String` JSON)
+- `/owtt_beacon/<beacon>/telemetry` (`std_msgs/String` JSON republished from the
+  latest MQTT report's `telemetry` object — not a subscribe of the surface topic)
 - MQTT `→ <topic_prefix>/<beacon>/cmd` (START/STOP requests)
 
 Services (call from Foxglove / CLI):
@@ -299,14 +298,15 @@ overridable as a launch argument.
 | `mode`                                           | `transmitter`                                          | `transmitter`                                                        |
 | `beacon_name`                                    | `lolo`                                                 | telemetry-source namespace                                           |
 | `telemetry_fields`                               | `['bt']`                                               | subset of `position`/`depth`/`svs`/`speed`/`bt`                      |
+| `codec`                                          | `dccl`                                                 | `dccl` (DCCL+CRC-8) or `ascii` (tagged `TEL:`); must match the surface unit |
 | `latlon_topic` / `depth_topic` / `speed_topic`   | derived                                                | override telemetry source topics                                     |
 | `svs_topic` / `svs_msg_type` / `svs_field`       | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | sound-velocity source                                                |
 | `bt_topic` / `bt_json_field`                     | derived / `tip`                                        | bt source + JSON field                                               |
 | `bt_name_only`                                   | `true`                                                 | keep only the action-client name, drop `(Status.RUNNING)`            |
 | `bt_basename`                                    | `true`                                                 | keep only the last path segment (`/lolo/move_to`→`move_to`)          |
 | `bt_strip_prefix`                                | `A_`                                                   | strip this leading prefix from the bt name (`A_Chilling`→`Chilling`) |
-| `position_precision`                             | `7`                                                    | lat/lon decimals in payload (`on_air.LATLON_DECIMALS`)               |
-| `max_bt_len`                                     | `32`                                                   | bt text cap (acoustic bandwidth)                                     |
+| `position_precision`                             | `7`                                                    | lat/lon decimals in **ascii** payloads (`ascii_on_air.LATLON_DECIMALS`; DCCL uses proto 7 dp) |
+| `max_bt_len`                                     | `32`                                                   | bt text cap (DCCL proto `max_length` is 16)                          |
 | `max_onair_bytes`                                | `64`                                                   | modem packet cap; `TEL:`+payload auto-trimmed to fit                 |
 | `send_period_s`                                  | `1.0`                                                  | **telemetry broadcast interval** (how often `$K` is pushed)          |
 | `position_seed_count`                            | `0`                                                    | include GPS in first N broadcasts then drop it                       |
@@ -338,6 +338,7 @@ overridable as a launch argument.
 | `unit_latlon_topic`                              | derived                                                | override own-position topic                                                   |
 | `commander`                                      | `false`                                                | **exactly one** unit `true`: only it transmits acoustic START/STOP            |
 | `beacon_name`                                    | `lolo`                                                 | beacon being tracked                                                          |
+| `codec`                                          | `dccl`                                                 | `dccl` or `ascii`; **must match the beacon**                                  |
 | `beacon_modem_id`                                | `101`                                                  | only accept this beacon's frames; empty = any                                 |
 | `start_keyword` / `stop_keyword` / `ack_message` | `START` / `STOP` / `OK`                                | command words (must match the beacon)                                         |
 | `mqtt_enabled`                                   | `true`                                                 | publish range reports to MQTT                                                 |

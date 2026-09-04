@@ -8,8 +8,9 @@ intersection) and publishes it as a ``sensor_msgs/NavSatFix`` for visualisation
 
 Each MQTT report (JSON, see ``surface_unit_node``) carries the publishing
 unit's lat/lon, its measured range to the beacon, and the decoded beacon
-telemetry. We keep the latest report per surface unit and, on a timer, fuse the
-two freshest into a fix.
+telemetry. This node ``json.loads`` that MQTT payload; it does **not**
+subscribe to the surface ROS ``…/telemetry`` String. We keep the latest report
+per surface unit and, on a timer, fuse the two freshest into a fix.
 
 Two circles generally intersect at two points; we disambiguate by choosing the
 solution closest to the motion-model prediction (and a configurable side on the
@@ -912,6 +913,7 @@ class InferenceNode(Node):
         return token
 
     def _publish_latest_telemetry(self, fresh):
+        """Republish the newest report's telemetry dict as JSON (Foxglove)."""
         if not fresh:
             return
         latest = max(fresh, key=self._meas_time)

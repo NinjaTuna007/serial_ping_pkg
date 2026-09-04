@@ -127,12 +127,34 @@ git submodule update --init --recursive
 
 ### Dependencies
 
-All Python and ROS 2 dependencies are declared in `package.xml`. Install them
-with rosdep from the workspace root:
+ROS 2 Python deps are in `package.xml`. From the workspace root:
 
 ```bash
 rosdep install --from-paths src --ignore-src -r -y
 ```
+
+The default beacon codec (`beacon.codec:=dccl`) also needs **libdccl**, which
+is **not** in Ubuntu/rosdep. Add the [GobySoft release repo](https://packages.gobysoft.org/ubuntu/release/)
+and install `python3-dccl4` + `libdccl4` ([upstream steps](https://libdccl.org/4.0/)):
+
+```bash
+export COMPONENT=release
+export GOBYSOFT_SIGNING_KEY=19478082E2F8D3FE
+sudo install -d -m 0755 /etc/apt/keyrings
+gpg --keyserver keyserver.ubuntu.com --recv-keys ${GOBYSOFT_SIGNING_KEY} \
+  && gpg --export ${GOBYSOFT_SIGNING_KEY} | sudo tee /etc/apt/keyrings/gobysoft.gpg >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/gobysoft.gpg] http://packages.gobysoft.org/$(. /etc/os-release; echo "$ID")/${COMPONENT}/ $(. /etc/os-release; echo "$VERSION_CODENAME")/" \
+  | sudo tee /etc/apt/sources.list.d/gobysoft_${COMPONENT}.list
+sudo apt update
+sudo apt install python3-dccl4 libdccl4
+```
+
+`rosdep -r` will warn that it cannot resolve `python3-dccl4` / `libdccl4`; that
+is expected. `beacon.codec:=ascii` (tagged `TEL:`) does not need libdccl.
+
+If apt is not an option, extract the GobySoft debs to `~/.local/opt/dccl4` (or
+set `DCCL4_PREFIX`) so `dccl_codec` can find `libdccl.so` and the Python
+extension. `setup.py` cannot pip-install libdccl.
 
 ### Build
 

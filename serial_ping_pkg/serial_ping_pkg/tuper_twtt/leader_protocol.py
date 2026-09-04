@@ -12,11 +12,11 @@ including the two commas)::
     $B<num_chars><lat>,<lon>,<dist>
 
 The length field is computed from the formatted payload so the encoder and the
-on-wire bytes stay consistent. Lat/lon use ``on_air.LATLON_DECIMALS``; ``dist``
-uses ``on_air.RANGE_DECIMALS``.
+on-wire bytes stay consistent. Lat/lon use ``ascii_on_air.LATLON_DECIMALS``;
+``dist`` uses ``ascii_on_air.RANGE_DECIMALS``.
 """
 
-from serial_ping_pkg.common.on_air import format_latlon, format_range
+from serial_ping_pkg.common.ascii_on_air import format_latlon, format_range
 
 
 def build_position_broadcast(lat, lon, dist):

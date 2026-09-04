@@ -1,37 +1,15 @@
-"""Compact telemetry codec for the OWTT beacon broadcast frame.
+"""Beacon telemetry codec: DCCL by default, tagged ASCII as a mode.
 
-The beacon broadcasts a tiny acoustic payload through the Teensy/Succorfish.
 The Teensy marks telemetry frames with a leading ``TEL:`` (see
 ``teensy_interface.TELEMETRY_MARKER``); everything *after* that marker is what
-this module encodes/decodes. Acoustic bandwidth is tiny, so the format is a
-terse, tagged, ``;``-separated list of fields and the beacon only includes the
-fields that are enabled (default: bt only):
+this module encodes/decodes.
 
-    <tag><value>;<tag><value>;...
-
-Tags (host convention, opaque to the Teensy):
-    P  position   "P<lat>,<lon>"   (lat/lon at a configurable precision)
-    D  depth      "D<m>"           (metres below surface, positive down)
-    C  svs        "C<m/s>"         (sound velocity from the beacon's SVS sensor)
-    S  speed      "S<m/s>"
-    B  bt tip     "B<text>"        (free text, sanitised + length-capped)
-
-The beacon measures the in-situ sound velocity, so it broadcasts it (``svs``)
-and the surface units use that for their travel-time -> range conversion instead
-of a frozen default.
-
-Depth matters for localisation: the acoustic range the surface units measure is
-a *slant* range to a possibly-submerged beacon. Broadcasting depth lets the
-inference node convert slant ranges to horizontal ranges before triangulating.
-
-Example (position + depth + svs + speed + bt):
-    P58.8232290,17.6359980;D12.30;C1481.6;S1.20;BA_Chilling (Status.RUNNING)
-
-Keep the total small: the Succorfish broadcast length is a 2-digit byte count
-and real payloads are limited (~64 bytes), so prefer few fields / short bt text.
+``codec='dccl'`` (default): ``libdccl`` ``BeaconTelemetry`` (id 124) plus a
+CRC-8-ATM trailer. ``codec='ascii'``: the older tagged string
+``P<lat>,<lon>;D<m>;…``. Beacon and surface unit must use the same mode.
 """
 
-from serial_ping_pkg.common.on_air import (
+from serial_ping_pkg.common.ascii_on_air import (
     LATLON_DECIMALS,
     format_depth,
     format_latlon,
@@ -39,7 +17,10 @@ from serial_ping_pkg.common.on_air import (
     format_svs,
 )
 
-# field name <-> single-char tag
+CODEC_DCCL = 'dccl'
+CODEC_ASCII = 'ascii'
+DEFAULT_CODEC = CODEC_DCCL
+
 FIELD_TAGS = {
     'position': 'P',
     'depth': 'D',
@@ -48,12 +29,33 @@ FIELD_TAGS = {
     'bt': 'B',
 }
 TAG_FIELDS = {tag: field for field, tag in FIELD_TAGS.items()}
-
-# Default order in which fields are laid out in the payload.
 DEFAULT_FIELD_ORDER = ('position', 'depth', 'svs', 'speed', 'bt')
-
-# Characters that would corrupt the payload (field/line delimiters).
 _FORBIDDEN = (';', '\r', '\n')
+_TRIM_ORDER = ('bt', 'speed', 'depth', 'svs')
+_DCCL_BT_MAX = 16
+
+
+def normalize_codec(codec):
+    """Return ``'dccl'`` or ``'ascii'``. Default is DCCL."""
+    name = DEFAULT_CODEC if codec is None else str(codec).strip().lower()
+    if name not in (CODEC_DCCL, CODEC_ASCII):
+        raise ValueError(
+            f'beacon codec must be {CODEC_DCCL!r} or {CODEC_ASCII!r}, '
+            f'got {codec!r}')
+    return name
+
+
+def require_codec_runtime(codec):
+    """Validate codec and load libdccl when the mode needs it.
+
+    ``ascii`` does not import libdccl. ``dccl`` fails here if the library is
+    missing, rather than on the first encode.
+    """
+    name = normalize_codec(codec)
+    if name == CODEC_DCCL:
+        from serial_ping_pkg.common.dccl_codec import _ensure_dccl
+        _ensure_dccl()
+    return name
 
 
 def sanitize(text):
@@ -64,29 +66,8 @@ def sanitize(text):
     return s.strip()
 
 
-# Order in which fields are sacrificed when the payload exceeds the on-air
-# budget. The numeric fields the localization math needs (position, svs, depth,
-# speed) are kept; the long free-text bt is trimmed/dropped first. position is
-# never auto-dropped (it is critical for branch-locking + offset calibration).
-_TRIM_ORDER = ('bt', 'speed', 'depth', 'svs')
-
-
-def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=None,
-                     bt=None, precision=None, max_bt_len=32, max_payload_len=0):
-    """Encode the enabled telemetry fields into the post-marker payload string.
-
-    ``enabled_fields`` is an iterable of field names (subset of
-    ``FIELD_TAGS``); only fields that are both enabled AND have a value are
-    emitted. ``position`` is ``(lat, lon)``. Returns the payload WITHOUT the
-    ``TEL:`` marker (the Teensy prepends it), suitable for
-    ``teensy_interface.build_telemetry_command``.
-
-    ``max_payload_len`` (0 = unlimited) bounds the encoded payload so the on-air
-    frame (``TEL:`` + payload) fits the modem's packet limit. When exceeded, the
-    free-text ``bt`` is truncated then dropped, then ``speed``/``depth``/``svs``
-    are dropped in turn; ``position`` is always preserved. ``precision`` defaults
-    to ``on_air.LATLON_DECIMALS``.
-    """
+def _encode_ascii(enabled_fields, position, depth, svs, speed, bt,
+                  precision, max_bt_len, max_payload_len):
     if precision is None:
         precision = LATLON_DECIMALS
     enabled = set(enabled_fields)
@@ -96,7 +77,8 @@ def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=
             continue
         if field == 'position' and position is not None:
             lat, lon = position
-            tokens['position'] = 'P' + format_latlon(lat, lon, decimals=precision)
+            tokens['position'] = 'P' + format_latlon(
+                lat, lon, decimals=precision)
         elif field == 'depth' and depth is not None:
             tokens['depth'] = 'D' + format_depth(depth)
         elif field == 'svs' and svs is not None:
@@ -111,7 +93,6 @@ def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=
 
     payload = assemble(tokens)
     if max_payload_len and len(payload) > max_payload_len:
-        # 1) Shrink the bt free text to claw back the overflow.
         if 'bt' in tokens:
             over = len(payload) - max_payload_len
             bt_text = tokens['bt'][1:]
@@ -121,7 +102,6 @@ def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=
             else:
                 tokens.pop('bt')
             payload = assemble(tokens)
-        # 2) Still too long: drop whole fields in trim-priority order.
         for field in _TRIM_ORDER:
             if len(payload) <= max_payload_len:
                 break
@@ -131,15 +111,78 @@ def encode_telemetry(enabled_fields, position=None, depth=None, svs=None, speed=
     return payload
 
 
-def decode_telemetry(payload):
-    """Decode a post-marker payload string into a dict of telemetry values.
+def _encode_dccl(enabled_fields, position, depth, svs, speed, bt,
+                 max_bt_len, max_payload_len):
+    from serial_ping_pkg.common.dccl_codec import _ensure_dccl, pack
+    _ensure_dccl()
+    from serial_ping_pkg.common import dccl_acoustic_pb2 as acoustic_pb2
 
-    ``payload`` is the broadcast data with the leading ``TEL:`` marker already
-    stripped. Returns a dict that may contain ``position`` ((lat, lon) tuple),
-    ``speed`` (float), ``bt`` (str), and ``unknown`` (dict of unparsed tags).
-    Malformed fields are skipped rather than raising.
+    max_bt_len = min(int(max_bt_len), _DCCL_BT_MAX)
+    enabled = set(enabled_fields)
+    tokens = {
+        'position': position,
+        'depth': depth,
+        'svs': svs,
+        'speed': speed,
+        'bt': bt,
+    }
+
+    def build(toks):
+        msg = acoustic_pb2.BeaconTelemetry()
+        if 'position' in enabled and toks.get('position') is not None:
+            lat, lon = toks['position']
+            msg.lat = float(lat)
+            msg.lon = float(lon)
+        if 'depth' in enabled and toks.get('depth') is not None:
+            msg.depth = float(toks['depth'])
+        if 'svs' in enabled and toks.get('svs') is not None:
+            msg.svs = float(toks['svs'])
+        if 'speed' in enabled and toks.get('speed') is not None:
+            msg.speed = float(toks['speed'])
+        if 'bt' in enabled and toks.get('bt') is not None:
+            msg.bt = sanitize(toks['bt'])[:max_bt_len]
+        if not (msg.HasField('lat') or msg.HasField('lon')
+                or msg.HasField('depth') or msg.HasField('svs')
+                or msg.HasField('speed') or msg.HasField('bt')):
+            return b''
+        return pack(msg)
+
+    payload = build(tokens)
+    if max_payload_len and len(payload) > max_payload_len:
+        for field in _TRIM_ORDER:
+            if len(payload) <= max_payload_len:
+                break
+            if tokens.get(field) is not None:
+                tokens[field] = None
+                payload = build(tokens)
+    return payload
+
+
+def encode_telemetry(enabled_fields, position=None, depth=None, svs=None,
+                     speed=None, bt=None, precision=None, max_bt_len=32,
+                     max_payload_len=0, codec=DEFAULT_CODEC):
+    """Encode enabled telemetry fields.
+
+    ``codec='dccl'`` (default) returns ``bytes`` (DCCL + CRC-8).
+    ``codec='ascii'`` returns a tagged ASCII ``str``.
     """
+    codec = normalize_codec(codec)
+    if codec == CODEC_ASCII:
+        return _encode_ascii(
+            enabled_fields, position, depth, svs, speed, bt,
+            precision, max_bt_len, max_payload_len)
+    return _encode_dccl(
+        enabled_fields, position, depth, svs, speed, bt,
+        max_bt_len, max_payload_len)
+
+
+def _decode_ascii(payload):
     out = {}
+    if isinstance(payload, (bytes, bytearray)):
+        try:
+            payload = payload.decode('ascii')
+        except UnicodeDecodeError:
+            return None
     if not payload:
         return out
     for token in payload.split(';'):
@@ -175,18 +218,64 @@ def decode_telemetry(payload):
     return out
 
 
+def _decode_dccl(payload):
+    from serial_ping_pkg.common.dccl_codec import _ensure_dccl, unpack
+    _ensure_dccl()
+    from serial_ping_pkg.common import dccl_acoustic_pb2 as acoustic_pb2
+
+    raw = (payload if isinstance(payload, (bytes, bytearray))
+           else payload.encode('latin-1'))
+    try:
+        msg = unpack(raw)
+    except Exception:
+        return None
+    if not isinstance(msg, acoustic_pb2.BeaconTelemetry):
+        return None
+    out = {}
+    if msg.HasField('lat') and msg.HasField('lon'):
+        out['position'] = (msg.lat, msg.lon)
+    if msg.HasField('depth'):
+        out['depth'] = msg.depth
+    if msg.HasField('svs'):
+        out['svs'] = msg.svs
+    if msg.HasField('speed'):
+        out['speed'] = msg.speed
+    if msg.HasField('bt'):
+        out['bt'] = msg.bt
+    return out
+
+
+def decode_telemetry(payload, codec=DEFAULT_CODEC):
+    """Decode post-marker payload to a dict of telemetry values.
+
+    Uses the same ``codec`` as encode (default DCCL). Returns ``None`` if
+    decode fails. Returns ``{}`` for empty input.
+    """
+    if payload is None or payload == b'' or payload == '':
+        return {}
+    codec = normalize_codec(codec)
+    if codec == CODEC_ASCII:
+        return _decode_ascii(payload)
+    return _decode_dccl(payload)
+
+
 def strip_marker(data, marker='TEL:'):
     """Return the telemetry payload (drop the leading marker) or ``None``.
 
-    ``data`` is the raw broadcast data from ``parse_broadcast_payload``. Returns
-    the post-marker payload string if ``data`` is a telemetry frame (starts with
-    ``marker``), else ``None`` (e.g. it is plain ``lat,lon`` GPS data).
+    Binary ``TEL:`` + DCCL stays ``bytes``; ASCII ``TEL:…`` stays ``str``.
     """
-    if isinstance(data, bytes):
-        try:
-            data = data.decode('ascii')
-        except UnicodeDecodeError:
-            return None
+    if data is None:
+        return None
+    if isinstance(data, (bytes, bytearray)):
+        raw = bytes(data)
+        m = marker.encode('ascii')
+        if raw.startswith(m) and len(raw) > len(m):
+            rest = raw[len(m):]
+            try:
+                return rest.decode('ascii')
+            except UnicodeDecodeError:
+                return rest
+        return None
     if data and data.startswith(marker):
         return data[len(marker):]
     return None

@@ -1,0 +1,38 @@
+syntax = "proto2";
+
+import "dccl/option_extensions.proto";
+
+// DCCL on-air bit layout for Succorfish NM3 (64-byte acoustic cap).
+// Contract for beacon.codec:=dccl. Packed by serial_ping_pkg.common.dccl_codec.
+// ASCII $G / $B / TEL: decimals live in ascii_on_air.py — a separate codec.
+// Private one-byte DCCL IDs: 124-127 (http://gobysoft.org/wiki/DcclIdTable).
+// Grain: lat/lon 7 dp (~1 cm), depth 1 cm, svs 0.1 m/s, speed 1 cm/s.
+// Depth range is 0–3000 m (3 km). Acoustic-relay padded DDD.DD stays 999.99.
+//
+// Generated Python stubs: serial_ping_pkg/common/dccl_acoustic_pb2.py
+// (do not edit that file; regenerate from this proto).
+
+message BeaconTelemetry {
+  option (dccl.msg) = {
+    codec_version: 4
+    id: 124
+    max_bytes: 32
+  };
+  optional double lat = 1 [(dccl.field) = { min: -90 max: 90 precision: 7 }];
+  optional double lon = 2 [(dccl.field) = { min: -180 max: 180 precision: 7 }];
+  optional double depth = 3 [(dccl.field) = { min: 0 max: 3000 precision: 2 }];
+  optional double svs = 4 [(dccl.field) = { min: 1300 max: 1700 precision: 1 }];
+  optional double speed = 5 [(dccl.field) = { min: 0 max: 10 precision: 2 }];
+  optional string bt = 6 [(dccl.field) = { max_length: 16 }];
+}
+
+message Pose {
+  option (dccl.msg) = {
+    codec_version: 4
+    id: 125
+    max_bytes: 16
+  };
+  required double lat = 1 [(dccl.field) = { min: -90 max: 90 precision: 7 }];
+  required double lon = 2 [(dccl.field) = { min: -180 max: 180 precision: 7 }];
+  optional double depth = 3 [(dccl.field) = { min: 0 max: 3000 precision: 2 }];
+}

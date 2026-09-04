@@ -35,6 +35,7 @@
     <!-- Beacon telemetry -->
     <arg name="beacon_name" default="lolo" description="Beacon vehicle name (telemetry source namespace)"/>
     <arg name="telemetry_fields" default="['bt']" description="Subset of position/depth/svs/speed/bt; default bt only"/>
+    <arg name="codec" default="dccl" description="Telemetry codec after TEL: dccl (default) or ascii"/>
     <arg name="latlon_topic" default="" description="Override beacon position topic"/>
     <arg name="depth_topic" default="" description="Override beacon depth topic (Float32, m +down)"/>
     <arg name="speed_topic" default="" description="Override beacon speed topic"/>
@@ -71,6 +72,7 @@
         <param name="teensy.command_terminator" type="str" value="$(var command_terminator)"/>
         <param name="beacon.name" type="str" value="$(var beacon_name)"/>
         <param name="beacon.telemetry_fields" value="$(var telemetry_fields)"/>
+        <param name="beacon.codec" type="str" value="$(var codec)"/>
         <param name="beacon.latlon_topic" type="str" value="$(var latlon_topic)"/>
         <param name="beacon.depth_topic" type="str" value="$(var depth_topic)"/>
         <param name="beacon.speed_topic" type="str" value="$(var speed_topic)"/>

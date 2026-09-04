@@ -5,12 +5,11 @@ configurable) that periodically broadcasts a small telemetry payload over the
 acoustic link. It talks to a Teensy 4.1 in *transmitter* mode (not the
 Succorfish directly).
 
-It subscribes to a configurable subset of telemetry sources and packs them into
-the compact frame defined in ``beacon_telemetry`` (default: bt tip only), then
-pushes it to the Teensy as ``$K<payload>``. The Teensy adds the ``TEL:`` marker
-and broadcasts ``$BnnTEL:<payload>`` on its PPS/OCXO schedule, so the surface units
-both receive the telemetry *and* can measure a one-way-travel-time range to the
-beacon.
+It subscribes to a configurable subset of telemetry sources and packs them
+with ``beacon.codec`` (default ``dccl``: ``BeaconTelemetry`` id 124 plus
+CRC-8; ``ascii``: tagged ``P<lat>,<lon>;D…``), then pushes ``$K<nn><payload>``
+to the Teensy. The Teensy adds the ``TEL:`` marker and broadcasts on its
+PPS/OCXO schedule. Beacon and surface unit must use the same codec.
 
 Telemetry sources (all under the beacon's namespace, smarc2 conventions):
     position  /<name>/smarc/latlon          geographic_msgs/GeoPoint
@@ -46,7 +45,7 @@ from serial_ping_pkg.utils import load_yaml_config
 from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
 from serial_ping_pkg.owtt_beacon import beacon_telemetry as bt_codec
-from serial_ping_pkg.common.on_air import LATLON_DECIMALS
+from serial_ping_pkg.common.ascii_on_air import LATLON_DECIMALS
 
 
 class BeaconNode(WireSafeSerialNode):
@@ -70,6 +69,7 @@ class BeaconNode(WireSafeSerialNode):
         self.declare_parameter('beacon.name', beacon_cfg.get('name', 'lolo'))
         # Subset of {position, speed, bt}; default broadcasts ONLY bt info.
         self.declare_parameter('beacon.telemetry_fields', beacon_cfg.get('telemetry_fields', ['bt']))
+        self.declare_parameter('beacon.codec', beacon_cfg.get('codec', bt_codec.DEFAULT_CODEC))
         self.declare_parameter('beacon.latlon_topic', beacon_cfg.get('latlon_topic', ''))
         self.declare_parameter('beacon.depth_topic', beacon_cfg.get('depth_topic', ''))
         self.declare_parameter('beacon.speed_topic', beacon_cfg.get('speed_topic', ''))
@@ -120,6 +120,8 @@ class BeaconNode(WireSafeSerialNode):
 
         self.name = self.get_parameter('beacon.name').get_parameter_value().string_value
         self.telemetry_fields = list(self.get_parameter('beacon.telemetry_fields').get_parameter_value().string_array_value)
+        self.telemetry_codec = bt_codec.require_codec_runtime(
+            self.get_parameter('beacon.codec').get_parameter_value().string_value)
         self.latlon_topic = self.get_parameter('beacon.latlon_topic').get_parameter_value().string_value
         self.depth_topic = self.get_parameter('beacon.depth_topic').get_parameter_value().string_value
         self.speed_topic = self.get_parameter('beacon.speed_topic').get_parameter_value().string_value
@@ -148,6 +150,10 @@ class BeaconNode(WireSafeSerialNode):
 
         if not self.telemetry_fields:
             self.telemetry_fields = ['bt']
+        self.get_logger().info(
+            f"Telemetry codec: {self.telemetry_codec}"
+            + (" (DCCL+CRC-8)" if self.telemetry_codec == bt_codec.CODEC_DCCL
+               else " (tagged ASCII)"))
 
         # Telemetry is gated by START/STOP commands (unless autostart is set).
         self.broadcasting = self.autostart
@@ -384,6 +390,7 @@ class BeaconNode(WireSafeSerialNode):
             precision=self.position_precision,
             max_bt_len=self.max_bt_len,
             max_payload_len=self._max_payload_len,
+            codec=self.telemetry_codec,
         )
         if not payload:
             self.get_logger().info(
@@ -391,18 +398,18 @@ class BeaconNode(WireSafeSerialNode):
                 throttle_duration_sec=5.0)
             return
 
-        # Warn (throttled) if the full payload had to be trimmed to fit the modem.
         if self._max_payload_len:
             full = bt_codec.encode_telemetry(
                 fields, position=self.latest_position, depth=self.latest_depth,
                 svs=self.latest_svs, speed=self.latest_speed, bt=self.latest_bt,
-                precision=self.position_precision, max_bt_len=self.max_bt_len)
+                precision=self.position_precision, max_bt_len=self.max_bt_len,
+                codec=self.telemetry_codec)
             if len(full) > self._max_payload_len:
                 self.get_logger().warn(
                     f"Telemetry payload {len(full)}B + '{ti.TELEMETRY_MARKER}' exceeds the "
-                    f"{self.max_onair_bytes}B on-air limit; trimmed to {len(payload)}B "
-                    f"('{payload}'). Shorten bt (beacon.max_bt_len), drop fields, or lower "
-                    f"beacon.position_precision.", throttle_duration_sec=10.0)
+                    f"{self.max_onair_bytes}B on-air limit; trimmed to {len(payload)}B. "
+                    f"Shorten bt (beacon.max_bt_len) or drop fields.",
+                    throttle_duration_sec=10.0)
 
         try:
             self.send_command(ti.build_telemetry_command(payload))

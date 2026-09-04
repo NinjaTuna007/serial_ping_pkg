@@ -61,7 +61,7 @@ def test_config_command_zero_pads_ids():
 
 
 def test_gps_command():
-    """GPS update is ``$G<lat>,<lon>`` at ``on_air.LATLON_DECIMALS``."""
+    """GPS update is ``$G<lat>,<lon>`` at ``ascii_on_air.LATLON_DECIMALS``."""
     assert ti.build_gps_command(59.1, 18.8) == '$G59.1000000,18.8000000'
 
 
@@ -153,6 +153,13 @@ def test_build_broadcast_command_bytes():
     cmd = ti.build_broadcast_command(raw)
     assert cmd == b'$B05He\nlo'
     assert ti.build_broadcast_command('OK') == '$B02OK'
+
+
+def test_build_telemetry_command_length_prefix():
+    """``$K`` uses the same two-digit length prefix as ``$B``."""
+    raw = b'He\nlo'
+    assert ti.build_telemetry_command(raw) == b'$K05He\nlo'
+    assert ti.build_telemetry_command('OK') == '$K02OK'
 
 
 def test_parse_owtt_delta():

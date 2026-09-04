@@ -193,9 +193,19 @@ class FakeSerialPort:
                 self.write_line(reply)
 
     def write_line(self, line):
-        """Push a single line to the driver (the harness adds CRLF)."""
+        """Push a single line to the driver (the harness adds CRLF).
+
+        ``bytes`` are written as-is plus CRLF (binary ``#B`` frames). Do not
+        rstrip: a DCCL CRC byte can be ``0x0A``/``0x0D``.
+        """
+        if isinstance(line, (bytes, bytearray)):
+            payload = bytes(line)
+            if not payload.endswith(b'\n'):
+                payload += b'\r\n'
+        else:
+            payload = (line + '\r\n').encode()
         try:
-            os.write(self._fd, (line + '\r\n').encode())
+            os.write(self._fd, payload)
         except OSError:
             pass
 
