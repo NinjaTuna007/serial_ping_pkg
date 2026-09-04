@@ -69,7 +69,9 @@ they line up by namespace):
 | Name | Type | Direction | Use |
 |------|------|-----------|-----|
 | `succorfish/tx` | `std_msgs/String` | node → driver | raw outbound command (driver appends the terminator) |
-| `succorfish/rx` | `succorfish_msgs/SerialLine` | driver → nodes | every inbound line as it arrives |
+| `succorfish/rx` | `succorfish_msgs/SerialLine` | driver → nodes | inbound **text** lines (printable `#B`/`#U` included) |
+| `succorfish/tx_bytes` | `succorfish_msgs/SerialFrame` | node → driver | raw UART bytes, no terminator (binary `$B`/`$U`) |
+| `succorfish/rx_bytes` | `succorfish_msgs/SerialFrame` | driver → nodes | every inbound frame as bytes |
 | `succorfish/connected` | `std_msgs/Bool` (latched) | driver → nodes | link up/down |
 | `succorfish/send_command` | `succorfish_msgs/SendCommand` (service) | node ↔ driver | synchronous request/response (write + wait for a reply matching a regex within a timeout) |
 

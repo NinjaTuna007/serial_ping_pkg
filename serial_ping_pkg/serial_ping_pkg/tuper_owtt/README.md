@@ -33,7 +33,9 @@ interface (from `succorfish_msgs/Topics`):
 | Name | Type | Direction | Use |
 |------|------|-----------|-----|
 | `succorfish/tx` | `std_msgs/String` | node → driver | raw outbound command, e.g. `$Y…`, `$G…` (driver appends the terminator) |
-| `succorfish/rx` | `succorfish_msgs/SerialLine` | driver → node | every inbound Teensy line (`#A…`, `#B…`, `#I…`) |
+| `succorfish/rx` | `succorfish_msgs/SerialLine` | driver → node | inbound **text** lines (`#A…`, printable `#B…`, `#I…`) |
+| `succorfish/rx_bytes` | `succorfish_msgs/SerialFrame` | driver → node | every inbound frame as bytes (binary `#B`/`#U` live here) |
+| `succorfish/tx_bytes` | `succorfish_msgs/SerialFrame` | node → driver | raw UART bytes, no terminator |
 | `succorfish/connected` | `std_msgs/Bool` (latched) | driver → node | link up/down |
 | `succorfish/send_command` | `succorfish_msgs/SendCommand` (service) | node ↔ driver | synchronous request/response |
 

@@ -172,7 +172,10 @@ class BeaconNode(WireSafeSerialNode):
 
         # Hold off on $K telemetry until the Teensy reports #Y,OK (mode applied).
         # Connect to the modem/Teensy via succorfish_driver (no direct serial).
-        self.connect_driver(on_line=self._on_serial_line, wait_timeout=5.0)
+        self.connect_driver(
+            on_line=self._on_serial_line,
+            on_frame=self._on_serial_frame,
+            wait_timeout=5.0)
 
         # Always leave the Teensy as a tame wire when this process exits.
         self.install_shutdown_guard()
@@ -278,24 +281,40 @@ class BeaconNode(WireSafeSerialNode):
 
     # ------------------------------------------------------------------ runtime
 
+    def _on_serial_frame(self, data, stamp):
+        del stamp
+        if data.startswith(b'#B') or data.startswith(b'#U'):
+            self.handle_line(data)
+
     def _on_serial_line(self, line):
         """Parse an inbound line: config confirmation + START/STOP commands.
 
         The Teensy forwards every received modem broadcast to the host even in
         transmitter mode, so the beacon can listen for command broadcasts here.
+        ``#B``/``#U`` are handled on ``on_frame`` so binary payloads are not
+        dropped.
         """
+        if isinstance(line, (bytes, bytearray)):
+            self.handle_line(bytes(line))
+            return
         line = line.strip()
-        if line:
-            self.handle_line(line)
+        if not line:
+            return
+        if line.startswith('#B') or line.startswith('#U'):
+            return
+        self.handle_line(line)
 
     def handle_line(self, line):
-        if self.handle_config_line(line):
+        if isinstance(line, str) and self.handle_config_line(line):
             return
 
         broadcast = ti.parse_broadcast_payload(line)
         if broadcast is not None:
             modem_id, payload = broadcast
-            self._handle_command(modem_id, payload.strip())
+            text = ti.application_as_text(payload)
+            if text is None:
+                return
+            self._handle_command(modem_id, text.strip())
 
     def _commander_allowed(self, modem_id):
         # Empty allow-list == accept commands from anyone.

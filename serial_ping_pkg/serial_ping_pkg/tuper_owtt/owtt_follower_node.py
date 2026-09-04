@@ -168,7 +168,10 @@ class OwttFollowerNode(WireSafeSerialNode):
         self._ready = False
 
         # Connect to the modem/Teensy via succorfish_driver (no direct serial).
-        self.connect_driver(on_line=self._on_serial_line, wait_timeout=5.0)
+        self.connect_driver(
+            on_line=self._on_serial_line,
+            on_frame=self._on_serial_frame,
+            wait_timeout=5.0)
 
         # Always leave the Teensy as a tame wire when this process exits.
         self.install_shutdown_guard()
@@ -415,9 +418,20 @@ class OwttFollowerNode(WireSafeSerialNode):
 
     # ------------------------------------------------------------------ runtime
 
+    def _on_serial_frame(self, data, stamp):
+        """``#B``/``#U`` frames, including binary payloads, arrive here."""
+        del stamp
+        if not data.startswith(b'#B') and not data.startswith(b'#U'):
+            return
+        if not getattr(self, '_ready', False):
+            return
+        self.handle_broadcast_frame(data)
+
     def _on_serial_line(self, line):
         line = line.strip()
         if not line:
+            return
+        if line.startswith('#B') or line.startswith('#U'):
             return
         # Config ACKs must be handled even before _ready (fast #Y,OK during init).
         if self.handle_config_line(line):
@@ -488,14 +502,20 @@ class OwttFollowerNode(WireSafeSerialNode):
         self.get_logger().info(f"Ignore-PPS status: {line}")
         return True
 
-    def handle_line(self, line):
-        # Leader position broadcast.
-        broadcast = ti.parse_broadcast(line)
-        if broadcast is not None:
-            modem_id, lat, lon = broadcast
-            self.pending_modem_id = modem_id
-            self.publish_position(modem_id, lat, lon)
+    def handle_broadcast_frame(self, frame):
+        """Pair ranging with any #B/#U; publish lat/lon only for GPS application."""
+        parsed = ti.parse_broadcast_payload(frame)
+        if parsed is None:
             return
+        modem_id, _app = parsed
+        self.pending_modem_id = modem_id
+        gps = ti.parse_broadcast(frame)
+        if gps is not None:
+            _, lat, lon = gps
+            self.publish_position(modem_id, lat, lon)
+
+    def handle_line(self, line):
+        # Leader position broadcast is handled on on_frame (handle_broadcast_frame).
 
         # Absolute #I TOF -> range, paired with the most recent broadcast.
         delta_us = ti.parse_owtt_delta(line, self.delta_prefix)

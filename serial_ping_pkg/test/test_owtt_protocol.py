@@ -113,7 +113,7 @@ def test_unwrap_timestamp_envelope_holdover():
 def test_parse_broadcast_timestamped_telemetry_not_gps():
     """TEL: frames (even enveloped) are not treated as lat/lon broadcasts."""
     app = 'TEL:P58.8,17.6;D1.0'
-    payload = f'T04|0001|H|{app}'
+    payload = f'T04|0001|H|0000000B|{app}'
     frame = f'#B101{len(payload):02d}{payload}'
     assert ti.parse_broadcast(frame) is None
     assert ti.parse_broadcast_payload(frame) == ('101', app)
@@ -127,6 +127,32 @@ def test_parse_broadcast_bad_length():
 def test_parse_broadcast_non_broadcast():
     """Non-``#B`` lines are not treated as broadcasts."""
     assert ti.parse_broadcast('#I123') is None
+
+
+def test_parse_broadcast_bytes_and_binary_application():
+    """Length-prefixed frames accept bytes; opaque application stays bytes."""
+    gps = '59.1234567,18.7654321'
+    payload = f'T04|003A|P|{gps}'
+    frame = f'#B007{len(payload):02d}{payload}'.encode('ascii')
+    assert ti.parse_broadcast(frame) == ('007', 59.1234567, 18.7654321)
+    modem_id, app = ti.parse_broadcast_payload(frame)
+    assert modem_id == '007'
+    assert app == gps
+
+    blob = b'T04|0001|P|' + b'\xff\x00\x0a\x7f'
+    framed = b'#B002' + f'{len(blob):02d}'.encode('ascii') + blob
+    assert ti.parse_broadcast(framed) is None
+    modem_id, app = ti.parse_broadcast_payload(framed)
+    assert modem_id == '002'
+    assert app == b'\xff\x00\x0a\x7f'
+
+
+def test_build_broadcast_command_bytes():
+    """Binary ``$B`` payloads stay bytes so the caller can write_bytes."""
+    raw = b'He\nlo'
+    cmd = ti.build_broadcast_command(raw)
+    assert cmd == b'$B05He\nlo'
+    assert ti.build_broadcast_command('OK') == '$B02OK'
 
 
 def test_parse_owtt_delta():

@@ -182,6 +182,11 @@ def strip_marker(data, marker='TEL:'):
     the post-marker payload string if ``data`` is a telemetry frame (starts with
     ``marker``), else ``None`` (e.g. it is plain ``lat,lon`` GPS data).
     """
+    if isinstance(data, bytes):
+        try:
+            data = data.decode('ascii')
+        except UnicodeDecodeError:
+            return None
     if data and data.startswith(marker):
         return data[len(marker):]
     return None

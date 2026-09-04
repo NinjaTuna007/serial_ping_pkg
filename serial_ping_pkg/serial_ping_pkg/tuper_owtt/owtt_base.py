@@ -55,12 +55,14 @@ class WireSafeSerialNode(Node):
         self._expected_ok_prefix = ''
         self._config_retry_timer = None
 
-    def connect_driver(self, on_line=None, on_status=None, callback_group=None,
-                       wait_timeout=None):
+    def connect_driver(self, on_line=None, on_status=None, on_frame=None,
+                       callback_group=None, wait_timeout=None):
         """Create the ``DriverClient``. Call once, after params are read.
 
-        ``on_line`` (if given) receives every inbound serial line; write-only
-        nodes leave it ``None``.
+        ``on_line`` (if given) receives every inbound *text* serial line;
+        write-only nodes leave it ``None``. ``on_frame`` receives raw
+        ``#B``/``#U`` frames (and every other UART record) as bytes — needed
+        when the payload may contain CR/LF.
 
         These nodes send a critical ``$Y`` config command at startup, which would
         be lost if the driver's subscription is not yet matched. When
@@ -69,7 +71,8 @@ class WireSafeSerialNode(Node):
         if it never appears we warn and carry on (the node still runs).
         """
         self.driver = DriverClient(
-            self, on_line=on_line, on_status=on_status, callback_group=callback_group)
+            self, on_line=on_line, on_status=on_status, on_frame=on_frame,
+            callback_group=callback_group)
         # Register wire-mode as the driver's on-exit command, so the Teensy is
         # returned to WIRE even if the driver outlives us or we are torn down
         # together (the driver is the guaranteed last holder of the open port).
@@ -90,10 +93,20 @@ class WireSafeSerialNode(Node):
         return self.driver
 
     def send_command(self, cmd):
-        """Publish a command to the driver (it appends the terminator)."""
+        """Publish a command to the driver.
+
+        ``bytes`` go out on ``tx_bytes`` (no terminator) so a binary ``$B``
+        payload is not UTF-8 encoded. Strings still use ``tx`` (driver appends
+        CRLF); the Teensy length-prefix assembler treats a trailing CRLF after
+        ``$B``/``$U`` as an empty skip.
+        """
+        if isinstance(cmd, (bytes, bytearray, memoryview)):
+            raw = bytes(cmd)
+            self.get_logger().info(f"-> Teensy bytes: {raw!r}", throttle_duration_sec=1.0)
+            if self.driver is not None:
+                self.driver.write_bytes(raw)
+            return
         if cmd.startswith('$G'):
-            # $G pushes can run at tens of Hz; keep one INFO line per second
-            # and the rest at DEBUG so the log stays readable.
             self.get_logger().info(f"-> Teensy: {cmd!r}", throttle_duration_sec=1.0)
             self.get_logger().debug(f"-> Teensy: {cmd!r}")
         else:

@@ -106,6 +106,24 @@ TELEMETRY_MARKER = "TEL:"
 # nodes unwrap this and ignore the TX stamp unless a caller asks.
 
 
+def _as_bytes(data):
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        return bytes(data)
+    if isinstance(data, str):
+        return data.encode('latin-1')
+    raise TypeError(f'expected bytes or str, got {type(data)!r}')
+
+
+def application_as_text(data):
+    """Return ASCII text, or None when ``data`` is a binary application blob."""
+    if isinstance(data, bytes):
+        try:
+            return data.decode('ascii')
+        except UnicodeDecodeError:
+            return None
+    return data
+
+
 def unwrap_timestamp_envelope(data):
     """Strip a stick-v1 TX timestamp envelope if present.
 
@@ -113,59 +131,75 @@ def unwrap_timestamp_envelope(data):
     bare ``lat,lon``, ``TEL:…``, ``START``, …), ``meta`` is ``None`` and
     ``application`` is ``data`` unchanged.
 
+    ``data`` may be ``str`` or ``bytes``. A binary application slot (DCCL)
+    is returned as ``bytes``; ASCII application is returned as ``str``.
+
     ``meta`` keys: ``tx_ss`` (int, 0-59), ``tx_fraction_us`` (int, always 0 for
     the compact form), ``tx_time_us`` (``tx_ss*1e6``), ``sequence``,
     ``timing_mode``, ``holdover_age_s`` (0 when the field is omitted).
     """
-    if not data or data[0] != 'T' or data.startswith(TELEMETRY_MARKER):
-        return None, data
+    raw = _as_bytes(data)
+    if not raw or raw[0] != ord('T') or raw.startswith(TELEMETRY_MARKER.encode('ascii')):
+        if isinstance(data, str):
+            return None, data
+        text = application_as_text(raw)
+        return None, text if text is not None else raw
 
     # T<ss>|<seq:hex>|<P|H|W>[|<holdover:hex>]|<application>
     i = 1
-    while i < len(data) and data[i].isdigit():
+    while i < len(raw) and 48 <= raw[i] <= 57:
         i += 1
-    if i == 1 or i >= len(data) or data[i] != '|':
-        return None, data
+    if i == 1 or i >= len(raw) or raw[i] != ord('|'):
+        app = application_as_text(raw)
+        return None, app if app is not None else data
     try:
-        tx_ss = int(data[1:i])
+        tx_ss = int(raw[1:i])
     except ValueError:
-        return None, data
+        app = application_as_text(raw)
+        return None, app if app is not None else data
     if tx_ss > 59:
-        return None, data
+        app = application_as_text(raw)
+        return None, app if app is not None else data
 
-    rest = data[i + 1:]
-    j = rest.find('|')
+    rest = raw[i + 1:]
+    j = rest.find(b'|')
     if j < 0:
-        return None, data
+        app = application_as_text(raw)
+        return None, app if app is not None else data
     try:
         sequence = int(rest[:j], 16)
     except ValueError:
-        return None, data
+        app = application_as_text(raw)
+        return None, app if app is not None else data
     if sequence > 0xFFFF:
-        return None, data
+        app = application_as_text(raw)
+        return None, app if app is not None else data
 
     rest = rest[j + 1:]
-    if len(rest) < 2 or rest[0] not in ('P', 'H', 'W') or rest[1] != '|':
-        return None, data
-    timing_mode = rest[0]
+    if len(rest) < 2 or rest[0] not in (ord('P'), ord('H'), ord('W')) or rest[1] != ord('|'):
+        app = application_as_text(raw)
+        return None, app if app is not None else data
+    timing_mode = chr(rest[0])
     rest = rest[2:]
 
-    # Optional holdover field: only present when TX timing_mode is H.
     holdover_age_s = 0
     if timing_mode == 'H':
-        k = rest.find('|')
+        k = rest.find(b'|')
         if k < 0:
-            return None, data
+            app = application_as_text(raw)
+            return None, app if app is not None else data
         try:
             holdover_age_s = int(rest[:k], 16)
         except ValueError:
-            return None, data
+            app = application_as_text(raw)
+            return None, app if app is not None else data
         application = rest[k + 1:]
     else:
         application = rest
 
     if not application:
-        return None, data
+        app = application_as_text(raw)
+        return None, app if app is not None else data
 
     meta = {
         'tx_ss': tx_ss,
@@ -175,7 +209,8 @@ def unwrap_timestamp_envelope(data):
         'timing_mode': timing_mode,
         'holdover_age_s': holdover_age_s,
     }
-    return meta, application
+    text = application_as_text(application)
+    return meta, text if text is not None else application
 
 
 def build_telemetry_command(payload, prefix="$K"):
@@ -201,8 +236,15 @@ def build_broadcast_command(data, prefix="$B"):
     Teensy passes such a command straight to the modem (it is not a ``$Y``/``$G``
     /``$K`` command), so it is broadcast immediately rather than on the PPS
     schedule -- handy for short control acknowledgements (e.g. ``OK``).
+
+    ``data`` may be ``str`` or ``bytes``. Returns ``bytes`` when ``data`` is
+    binary so the caller can ``write_bytes``; ASCII still returns ``str``.
     """
-    return f"{prefix}{len(data):02d}{data}"
+    raw = _as_bytes(data)
+    cmd = prefix.encode('ascii') + f'{len(raw):02d}'.encode('ascii') + raw
+    if isinstance(data, str) and application_as_text(raw) is not None:
+        return cmd.decode('ascii')
+    return cmd
 
 
 def parse_broadcast_payload(line, prefix="#B"):
@@ -210,25 +252,41 @@ def parse_broadcast_payload(line, prefix="#B"):
 
     Format: ``#B<modem_id(3)><num_chars(2)><data>``. ``data`` may be a stick-v1
     timestamp envelope; this returns the *application* payload after unwrapping
-    (legacy ``lat,lon``, ``TEL:…``, control words, …). The raw on-air bytes
-    remain on ``succorfish/rx`` for anything that needs the envelope.
+    (legacy ``lat,lon``, ``TEL:…``, control words, or a binary blob).
 
-    Returns ``None`` if the line is not a parseable broadcast.
+    ``line`` may be ``str`` or ``bytes``. Application is ``str`` when ASCII,
+    ``bytes`` when not. Returns ``None`` if the frame is not a parseable broadcast.
     """
-    if not line.startswith(prefix):
+    raw = _as_bytes(line)
+    pfx = prefix.encode('ascii') if isinstance(prefix, str) else prefix
+    if not raw.startswith(pfx):
         return None
-    if len(line) < 7:
-        return None
-    modem_id = line[2:5]
-    try:
-        num_chars = int(line[5:7])
-    except ValueError:
-        return None
-    data = line[7:7 + num_chars]
-    if len(data) != num_chars:
-        return None
-    _, application = unwrap_timestamp_envelope(data)
-    return modem_id, application
+    if pfx == b'#B':
+        if len(raw) < 7:
+            return None
+        try:
+            modem_id = raw[2:5].decode('ascii')
+            num_chars = int(raw[5:7])
+        except (ValueError, UnicodeDecodeError):
+            return None
+        data = raw[7:7 + num_chars]
+        if len(data) != num_chars:
+            return None
+        _, application = unwrap_timestamp_envelope(data)
+        return modem_id, application
+    if pfx == b'#U':
+        if len(raw) < 4:
+            return None
+        try:
+            num_chars = int(raw[2:4])
+        except ValueError:
+            return None
+        data = raw[4:4 + num_chars]
+        if len(data) != num_chars:
+            return None
+        _, application = unwrap_timestamp_envelope(data)
+        return '000', application
+    return None
 
 
 def parse_owtt_delta(line, prefix="#I"):
@@ -240,6 +298,11 @@ def parse_owtt_delta(line, prefix="#I"):
     exceed 1 s for long ranges). The local PPS residual, when needed, is the
     ``#J`` second field or the ``#OWTT`` ``delta_us`` column.
     """
+    if isinstance(line, (bytes, bytearray)):
+        try:
+            line = bytes(line).decode('ascii')
+        except UnicodeDecodeError:
+            return None
     if not line.startswith(prefix):
         return None
     try:
@@ -269,9 +332,10 @@ def parse_broadcast(line, prefix="#B"):
     if parsed is None:
         return None
     modem_id, data = parsed
-    if data.startswith(TELEMETRY_MARKER):
+    text = application_as_text(data)
+    if text is None or text.startswith(TELEMETRY_MARKER):
         return None
-    parts = data.split(',')
+    parts = text.split(',')
     if len(parts) < 2:
         return None
     try:

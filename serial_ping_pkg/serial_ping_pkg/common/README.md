@@ -7,7 +7,9 @@ They talk to the modem through `succorfish_driver` over ROS.
 > Driver requirement: a `succorfish_driver` node must be running. These nodes
 > reach it through the relative names `succorfish/tx` (`std_msgs/String`, raw
 > outbound command — the driver appends the line terminator), `succorfish/rx`
-> (`succorfish_msgs/SerialLine`, every inbound line), `succorfish/connected`
+> (`succorfish_msgs/SerialLine`, inbound text lines), `succorfish/tx_bytes` and
+> `succorfish/rx_bytes` (`succorfish_msgs/SerialFrame`, raw UART bytes for binary
+> `$B`/`$U`), `succorfish/connected`
 > (`std_msgs/Bool`, latched link state) and the `succorfish/send_command`
 > service (`succorfish_msgs/SendCommand`, synchronous write-and-wait-for-reply).
 > Because the names are relative, a node lines up with its driver when they

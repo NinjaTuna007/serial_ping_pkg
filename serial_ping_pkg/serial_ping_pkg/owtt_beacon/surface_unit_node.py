@@ -155,7 +155,10 @@ class SurfaceUnitNode(WireSafeSerialNode):
         self._ready = False
 
         # Connect to the modem/Teensy via succorfish_driver (no direct serial).
-        self.connect_driver(on_line=self._on_serial_line, wait_timeout=5.0)
+        self.connect_driver(
+            on_line=self._on_serial_line,
+            on_frame=self._on_serial_frame,
+            wait_timeout=5.0)
 
         self.install_shutdown_guard()
 
@@ -290,9 +293,18 @@ class SurfaceUnitNode(WireSafeSerialNode):
 
     # ------------------------------------------------------------------ runtime
 
+    def _on_serial_frame(self, data, stamp):
+        del stamp
+        if not getattr(self, '_ready', False):
+            return
+        if data.startswith(b'#B') or data.startswith(b'#U'):
+            self.handle_line(data)
+
     def _on_serial_line(self, line):
         line = line.strip()
         if not line:
+            return
+        if line.startswith('#B') or line.startswith('#U'):
             return
         if self.handle_config_line(line):
             return
@@ -304,6 +316,10 @@ class SurfaceUnitNode(WireSafeSerialNode):
         broadcast = ti.parse_broadcast_payload(line)
         if broadcast is not None:
             modem_id, payload_data = broadcast
+            text = ti.application_as_text(payload_data)
+            if text is None:
+                return
+            payload_data = text
             # The beacon's OK ack to a START/STOP command -> relay to MQTT.
             if payload_data.strip() == self.ack_message and \
                     (not self.beacon_modem_id or modem_id == self.beacon_modem_id):
