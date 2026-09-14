@@ -30,7 +30,9 @@ Shared, hardware-free wire-format helpers:
 | [`dccl_acoustic_pb2.py`](dccl_acoustic_pb2.py) | generated stubs — do not edit |
 | [`../../proto/dccl_acoustic.proto`](../../proto/dccl_acoustic.proto) | DCCL schema (`beacon.codec:=dccl`) |
 
-See [`proto/README.md`](../../proto/README.md) for the codec map.
+See [`proto/README.md`](../../proto/README.md) for the codec map (ASCII digits
+vs packed DCCL bits). The driver `tx` vs `tx_bytes` table is the UART pipe,
+not that codec.
 
 ---
 

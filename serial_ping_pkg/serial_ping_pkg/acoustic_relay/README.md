@@ -29,6 +29,8 @@ receive in:    #B<modem-id(3)><nn><lat>,<lon>,<depth>,<heading>\r\n
 
 Lat/lon are 7 decimal places (~1 cm), depth is centimetres (`DDD.DD`), heading
 is integer degrees. Defaults live in `serial_ping_pkg.common.ascii_on_air`.
+This path stays **ASCII digits** (not DCCL); see
+[`proto/README.md`](../../proto/README.md).
 
 ---
 

@@ -11,7 +11,7 @@ along as submodules.
 
 | Path | What it is |
 |------|------------|
-| [`serial_ping_pkg/`](serial_ping_pkg/README.md) | Acoustic comms and ranging: ping, range-only localization, position relay, TWTT/OWTT leader-follower. |
+| [`serial_ping_pkg/`](serial_ping_pkg/README.md) | Acoustic comms and ranging: ping, range-only localization, position relay, TWTT/OWTT leader-follower. On-air ASCII digits vs packed DCCL: [`serial_ping_pkg/proto/README.md`](serial_ping_pkg/proto/README.md). |
 | [`succorfish_driver/`](succorfish_driver/README.md) | Serial bridge plus `succorfish_msgs`. Owns the modem port and exposes it over ROS. |
 | [`vendor/succorfish/`](vendor/README.md) | NM3 firmware and Delphis manuals. |
 | [`microcontroller/succor-sketches/`](microcontroller/README.md) | Teensy / Arduino sketches. |

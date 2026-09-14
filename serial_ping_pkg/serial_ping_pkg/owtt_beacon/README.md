@@ -45,8 +45,10 @@ The payload after the Teensy's `TEL:` marker is chosen by `beacon.codec`
 | `dccl` (default) | `libdccl` `BeaconTelemetry` (id 124) + CRC-8-ATM trailer | `python3-dccl4` |
 | `ascii` | tagged `P<lat>,<lon>;D<m>;C<svs>;S<speed>;B<bt>` | nothing extra |
 
-Schema: [`proto/dccl_acoustic.proto`](../../proto/dccl_acoustic.proto) (map:
-[`proto/README.md`](../../proto/README.md)). Optional fields match the old tags
+Schema: [`proto/dccl_acoustic.proto`](../../proto/dccl_acoustic.proto). Why
+`14.2334` as glyphs is not the same as DCCL bits, and how that differs from
+the driver byte pipe:
+[`proto/README.md`](../../proto/README.md). Optional fields match the old tags
 (lat/lon, depth 0–3000 m, svs, speed, bt). DCCL bounds live in that proto;
 ASCII decimals are `ascii_on_air.py` (relay padded `DDD.DD` is still 999.99 m).
 There is **no auto-fallback**: a DCCL receiver drops tagged ASCII, and an ASCII

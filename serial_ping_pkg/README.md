@@ -75,6 +75,11 @@ they line up by namespace):
 | `succorfish/connected` | `std_msgs/Bool` (latched) | driver → nodes | link up/down |
 | `succorfish/send_command` | `succorfish_msgs/SendCommand` (service) | node ↔ driver | synchronous request/response (write + wait for a reply matching a regex within a timeout) |
 
+Those `tx` / `tx_bytes` rows are the **UART pipe** (text line vs raw bytes,
+including a payload that contains `0x0A`). How a float is written *inside* the
+acoustic blob — glyphs `14.2334` vs packed DCCL bits — is
+[`proto/README.md`](proto/README.md).
+
 So **start the driver first**, picking the profile that matches your hardware —
 `profile:=succorfish` (9600-baud `/dev/ttyUSB*`) or `profile:=teensy`
 (115200-baud `/dev/ttyACM*`) — and keep node + driver in the same namespace.
@@ -95,6 +100,7 @@ or namespace.
 
 ```
 serial_ping_pkg/
+├── proto/                     # on-air codecs (ASCII digits vs DCCL bits)
 ├── serial_ping_pkg/           # python source
 │   ├── utils.py               # shared config loader
 │   ├── common/                # general-purpose nodes (+ ping_protocol.py, driver_client.py)
