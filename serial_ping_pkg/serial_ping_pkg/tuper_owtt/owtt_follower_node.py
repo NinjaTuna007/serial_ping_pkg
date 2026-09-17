@@ -2,7 +2,8 @@
 
 Talks to a Teensy 4.1 (not the Succorfish directly). The Teensy is put into
 "receiver" mode and:
-  * passes through the Succorfish broadcast frames (``#B<modem><nn><lat,lon>``)
+  * passes through the Succorfish broadcast frames (``#B`` with ASCII
+    ``lat,lon`` or DCCL Pose after the timestamp envelope)
   * additionally emits a one-way-travel-time delta line (default prefix ``#I``)
     once it has measured the OWTT for the most recent broadcast.
 
@@ -20,9 +21,9 @@ configured ``owtt.offset_us`` is used.
 
 True range is **modem-to-modem**: the leader broadcast already carries the
 leader modem geographic position (``owtt_leader_node`` applies
-``base_link``→``modem_link`` before ``$G``). This node applies the same lever
-arm to its own antenna fix via tf2 before the geodesic, so auto-cal matches
-the acoustic path rather than antenna-to-modem.
+``base_link``→``modem_link`` before packing DCCL Pose). This node applies the
+same lever arm to its own antenna fix via tf2 before the geodesic, so auto-cal
+matches the acoustic path rather than antenna-to-modem.
 
 ``sound_velocity`` defaults to 1500 m/s but is sourced live from a configurable
 topic/msg type (default ``/lolo/sensors/svs`` of type ``svs_interfaces/msg/SVS``,
@@ -503,16 +504,22 @@ class OwttFollowerNode(WireSafeSerialNode):
         return True
 
     def handle_broadcast_frame(self, frame):
-        """Pair ranging with any #B/#U; publish lat/lon only for GPS application."""
+        """Pair ranging with any #B/#U; publish lat/lon for ASCII or DCCL Pose."""
         parsed = ti.parse_broadcast_payload(frame)
         if parsed is None:
             return
-        modem_id, _app = parsed
+        modem_id, app = parsed
         self.pending_modem_id = modem_id
-        gps = ti.parse_broadcast(frame)
+        gps = ti.parse_broadcast_position(frame)
         if gps is not None:
             _, lat, lon = gps
             self.publish_position(modem_id, lat, lon)
+            return
+        preview = app if isinstance(app, str) else bytes(app)[:24]
+        why = ti._POSE_DECODE_ERROR or 'not Pose'
+        self.get_logger().warn(
+            f"No Pose in broadcast from {modem_id} ({preview!r}): {why}",
+            throttle_duration_sec=5.0)
 
     def handle_line(self, line):
         # Leader position broadcast is handled on on_frame (handle_broadcast_frame).

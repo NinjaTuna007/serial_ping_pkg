@@ -8,7 +8,7 @@ Succorfish directly).
 It subscribes to a configurable subset of telemetry sources and packs them
 with ``beacon.codec`` (default ``dccl``: ``BeaconTelemetry`` id 124 plus
 CRC-8; ``ascii``: tagged ``P<lat>,<lon>;D…``), then pushes ``$K<nn><payload>``
-to the Teensy. The Teensy adds the ``TEL:`` marker and broadcasts on its
+to the Teensy. The Teensy stores those bytes as-is and broadcasts on its
 PPS/OCXO schedule. Beacon and surface unit must use the same codec.
 
 Telemetry sources (all under the beacon's namespace, smarc2 conventions):
@@ -92,8 +92,8 @@ class BeaconNode(WireSafeSerialNode):
             'beacon.position_precision',
             beacon_cfg.get('position_precision', LATLON_DECIMALS))
         self.declare_parameter('beacon.max_bt_len', beacon_cfg.get('max_bt_len', 32))
-        # Max on-air bytes for the modem packet (Succorfish NM3 caps at 64). The
-        # encoded telemetry payload is trimmed so that TEL:<payload> fits this.
+        # Max on-air bytes for the modem packet (Succorfish NM3 caps at 64).
+        # Encoded application is trimmed to this; the Teensy adds the envelope.
         self.declare_parameter('beacon.max_onair_bytes', beacon_cfg.get('max_onair_bytes', 64))
         self.declare_parameter('beacon.send_period_s', beacon_cfg.get('send_period_s', 1.0))
         # Include the beacon's own GPS in the first N broadcasts (even if
@@ -136,8 +136,9 @@ class BeaconNode(WireSafeSerialNode):
         self.position_precision = self.get_parameter('beacon.position_precision').get_parameter_value().integer_value
         self.max_bt_len = self.get_parameter('beacon.max_bt_len').get_parameter_value().integer_value
         self.max_onair_bytes = self.get_parameter('beacon.max_onair_bytes').get_parameter_value().integer_value
-        # Budget for the encoded payload = on-air limit minus the TEL: marker.
-        self._max_payload_len = max(0, self.max_onair_bytes - len(ti.TELEMETRY_MARKER))
+        # Budget for the encoded payload = modem on-air limit (envelope is
+        # added by the Teensy; application is $K bytes with no TEL: prefix).
+        self._max_payload_len = max(0, self.max_onair_bytes)
         self.send_period_s = self.get_parameter('beacon.send_period_s').get_parameter_value().double_value
         self.position_seed_count = self.get_parameter('beacon.position_seed_count').get_parameter_value().integer_value
 
@@ -406,7 +407,7 @@ class BeaconNode(WireSafeSerialNode):
                 codec=self.telemetry_codec)
             if len(full) > self._max_payload_len:
                 self.get_logger().warn(
-                    f"Telemetry payload {len(full)}B + '{ti.TELEMETRY_MARKER}' exceeds the "
+                    f"Telemetry payload {len(full)}B exceeds the "
                     f"{self.max_onair_bytes}B on-air limit; trimmed to {len(payload)}B. "
                     f"Shorten bt (beacon.max_bt_len) or drop fields.",
                     throttle_duration_sec=10.0)

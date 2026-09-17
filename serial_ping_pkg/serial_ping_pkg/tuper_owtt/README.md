@@ -32,7 +32,7 @@ interface (from `succorfish_msgs/Topics`):
 
 | Name | Type | Direction | Use |
 |------|------|-----------|-----|
-| `succorfish/tx` | `std_msgs/String` | node → driver | raw outbound command, e.g. `$Y…`, `$G…` (driver appends the terminator) |
+| `succorfish/tx` | `std_msgs/String` | node → driver | raw outbound command, e.g. `$Y…` (driver appends the terminator) |
 | `succorfish/rx` | `succorfish_msgs/SerialLine` | driver → node | inbound **text** lines (`#A…`, printable `#B…`, `#I…`) |
 | `succorfish/rx_bytes` | `succorfish_msgs/SerialFrame` | driver → node | every inbound frame as bytes (binary `#B`/`#U` live here) |
 | `succorfish/tx_bytes` | `succorfish_msgs/SerialFrame` | node → driver | raw UART bytes, no terminator |
@@ -51,7 +51,7 @@ interface (from `succorfish_msgs/Topics`):
  │            ▼                  │            │            ▲          ▲            │
  │     owtt_leader_node          │            │      owtt_follower_node            │
  └────────────┬──────────────────┘            └────────────┬───────────────────────┘
-   $YT… (cfg) │ $G<lat>,<lon>                 $YR (cfg)    │ reads #B + #I
+   $YT… (cfg) │ $K + DCCL Pose                $YR (cfg)    │ reads #B + #I
               │ 115200                                     │ 115200
         ┌─────▼──────┐                                  ┌────▼───────┐
         │  Teensy 4.1│  ⇄  Succorfish  (acoustic)  ⇄   │ Teensy 4.1 │
@@ -60,11 +60,13 @@ interface (from `succorfish_msgs/Topics`):
 ```
 
 - **Leader:** subscribes to its GPS, applies the `base_link → modem_link` lever
-  arm via tf2, and feeds `$G<lat>,<lon>` to the Teensy. The Teensy broadcasts
-  `$B…` on the PPS schedule.
-- **Follower:** reads the relayed broadcast `#B<modem><nn>lat,lon` and the
-  Teensy's one-way time delta `#I<delta_us>`, converts the delta to a range, and
-  republishes position + range on the legacy follower topics.
+  arm via tf2, packs DCCL `Pose` (id 125) on the host, and feeds `$K<nn><bytes>`
+  to the Teensy. The Teensy stores those bytes as-is and broadcasts `$B…`
+  (timestamp envelope + application) on the PPS schedule. It does not encode
+  or prefix `TEL:`.
+- **Follower:** reads the relayed `#B` (DCCL Pose after the envelope, or
+  legacy ASCII `lat,lon`) and the Teensy's one-way time delta `#I<delta_us>`,
+  converts the delta to a range, and republishes position + range.
 
 Range conversion:
 
@@ -84,11 +86,12 @@ address to set on this node.
 | host → Teensy | `$Y<own_id>R` | configure as **receiver** (forced non-broadcasting follower); e.g. `$Y101R` |
 | host → Teensy | `$Y<own_id>T<listen_id(3)><epochs>s` | configure as **transmitter**; e.g. `$Y042T0001s` (listen `000` = go first, every 1 epoch), `$Y042T0074s` (wait to hear modem `007`, every 4 epochs) |
 | host → Teensy | `$Y<own_id>W` | configure as **wire** (transparent passthrough; Teensy "switched off"); e.g. `$Y007W` |
-| host → Teensy | `$G<lat>,<lon>` | update the transmitter's stored GPS position (transmitter mode only; not forwarded) |
+| host → Teensy | `$K<nn><payload>` | store opaque telemetry (stick GPS is host-packed DCCL Pose); Teensy broadcasts as-is on the PPS schedule |
+| host → Teensy | `$G<lat>,<lon>` | ASCII GPS store (firmware still accepts it; the OWTT leader does not send it) |
 | host → Teensy | *(any classic Succorfish cmd)* | passed straight through to the modem |
-| Teensy → modem | `$Bnn<lat>,<lon>` | automatic scheduled broadcast (Teensy generates this, not the host) |
-| Teensy → host | `#B<modem(3)><nn(2)><lat,lon>` | relayed broadcast frame from the modem, e.g. `#B00722<lat>,<lon>` |
-| Teensy → host | `#I<delta_us>` | one-way travel-time delta, sent right after a GPS-bearing modem line |
+| Teensy → modem | `$Bnn<envelope><payload>` | automatic scheduled broadcast of the stored `$K` or `$G` bytes |
+| Teensy → host | `#B<modem(3)><nn(2)><data>` | relayed broadcast frame (envelope + DCCL, or legacy ASCII `lat,lon`) |
+| Teensy → host | `#I<delta_us>` | one-way travel-time delta, sent right after a timed modem line |
 
 Commands are terminated with `\r\n` by default (`teensy.command_terminator`).
 
@@ -129,11 +132,10 @@ stays protocol-agnostic — it just replays the opaque string the node registere
 | Direction | Topic | Type | Notes |
 |-----------|-------|------|-------|
 | Subscribe | `leader.latlon_topic` (default `/<robot_name>/smarc/latlon`) | `geographic_msgs/GeoPoint` | leader's own GPS |
-| Driver out | `$G<lat>,<lon>` on `succorfish/tx` | `std_msgs/String` | modem position after lever-arm transform; lat/lon at 7 decimal places (`ascii_on_air` digits, not DCCL — [proto/README.md](../../proto/README.md)) |
+| Driver out | `$K<nn><dccl pose>` on `succorfish/tx_bytes` | `succorfish_msgs/SerialFrame` | modem position after lever-arm transform, packed as DCCL Pose + CRC-8 ([proto/README.md](../../proto/README.md)) |
 
-On startup it sends `$Y<own_id>T…` and then **waits for the modem's `#A<own_id>`
-confirmation** (forwarded to the host) before sending any `$G` — the Teensy only
-applies the new config once confirmed.
+On startup it sends `$Y<own_id>T…` and then **waits for `#Y,OK,<own_id>`**
+before sending any `$K` — the Teensy only applies the new config once confirmed.
 
 Uses tf2: the modem position is `(world→modem) − (world→base)` translation
 difference (lever arm already rotated by vehicle orientation), converted to a
@@ -182,7 +184,7 @@ a launch argument.
 | `leader.base_link_suffix` | `base_link` | frame-name suffix searched for the base frame |
 | `leader.modem_link_suffix` | `modem_link` | frame-name suffix searched for the modem frame |
 | `leader.world_frame` | `map` | world/odom frame for orientation lookup (ENU: x=East, y=North) |
-| `leader.send_period_s` | `1.0` | how often to push `$G` to the Teensy |
+| `leader.send_period_s` | `1.0` | how often to push DCCL Pose (`$K`) to the Teensy |
 
 > The leader auto-discovers its tf frames from the tree (there is only one
 > `base_link` and one `modem_link`), so you don't have to hardcode the vehicle
@@ -319,7 +321,7 @@ ros2 launch serial_ping_pkg owtt_leader_node.launch \
 | `base_link_suffix` | `base_link` | suffix used for base-frame auto-discovery |
 | `modem_link_suffix` | `modem_link` | suffix used for modem-frame auto-discovery |
 | `world_frame` | `map` | world/odom frame for orientation lookup |
-| `send_period_s` | `1.0` | how often the node pushes `$G` to the Teensy |
+| `send_period_s` | `1.0` | how often the node pushes DCCL Pose (`$K`) to the Teensy |
 | `mode` | `transmitter` | `transmitter` or `wire` (passive passthrough) |
 | `command_terminator` | `\r\n` | appended to every Teensy command; rarely changed |
 

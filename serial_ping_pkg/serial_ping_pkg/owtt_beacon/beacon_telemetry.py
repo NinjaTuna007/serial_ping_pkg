@@ -1,8 +1,7 @@
 """Beacon telemetry codec: DCCL by default, tagged ASCII as a mode.
 
-The Teensy marks telemetry frames with a leading ``TEL:`` (see
-``teensy_interface.TELEMETRY_MARKER``); everything *after* that marker is what
-this module encodes/decodes.
+Application bytes after the Teensy timestamp envelope (no ``TEL:`` prefix).
+RX still strips a leftover ``TEL:`` if an unflashed box sends one.
 
 ``codec='dccl'`` (default): ``libdccl`` ``BeaconTelemetry`` (id 124) plus a
 CRC-8-ATM trailer. ``codec='ascii'``: the older tagged string
@@ -260,9 +259,12 @@ def decode_telemetry(payload, codec=DEFAULT_CODEC):
 
 
 def strip_marker(data, marker='TEL:'):
-    """Return the telemetry payload (drop the leading marker) or ``None``.
+    """Return the telemetry payload; strip leftover ``TEL:`` if present.
 
-    Binary ``TEL:`` + DCCL stays ``bytes``; ASCII ``TEL:…`` stays ``str``.
+    Firmware no longer prefixes ``TEL:``. Without a marker the payload is
+    returned unchanged so ``codec:=ascii`` tagged ``P…`` still decodes.
+    Binary leftover ``TEL:`` + DCCL stays ``bytes``; ASCII ``TEL:…`` stays
+    ``str``.
     """
     if data is None:
         return None
@@ -275,7 +277,7 @@ def strip_marker(data, marker='TEL:'):
                 return rest.decode('ascii')
             except UnicodeDecodeError:
                 return rest
-        return None
-    if data and data.startswith(marker):
+        return raw
+    if data.startswith(marker):
         return data[len(marker):]
-    return None
+    return data

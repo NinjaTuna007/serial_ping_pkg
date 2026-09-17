@@ -73,4 +73,4 @@ leader:
   # World/odom frame used to look up vehicle orientation for the lever-arm rotation.
   world_frame: "map"
   gps_command_prefix: "$G"            # $G<lat>,<lon>
-  send_period_s: 1.0                  # how often to push the latest GPS to the Teensy
+  send_period_s: 1.0                  # how often to push DCCL Pose ($K) to the Teensy

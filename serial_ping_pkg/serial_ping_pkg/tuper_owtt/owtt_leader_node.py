@@ -7,17 +7,19 @@ schedule. This node's job on the ROS side is:
   1. Subscribe to the vehicle's latlon topic and cache the latest fix.
   2. On a timer, transform that position from the base frame to the modem frame
      (the modem's geographic position, accounting for the lever arm and the
-     vehicle's current orientation via tf2) and push it to the Teensy as
-     ``$G<lat>,<lon>``.
+     vehicle's current orientation via tf2), pack it as DCCL ``Pose``, and
+     push it to the Teensy as ``$K<nn><bytes>``. The Teensy shunts those bytes
+     on air (envelope + application, no ``TEL:``) and does timing; it does
+     not encode.
 
 The base/modem tf frames are auto-discovered from the tf tree (the single
 ``*base_link`` and ``*modem_link`` frames), so the node does not need to be told
 the vehicle's name for the transform. Leaders are vehicle-specific and are never
 named ``lolo`` (that is the follower).
 
-The Teensy stores the latest GPS and emits the actual ``$B`` broadcast to the
-Succorfish at the configured interval, optionally waiting to hear another modem
-id first for round-robin scheduling among multiple leaders.
+The Teensy stores the latest ``$K`` payload and emits the actual ``$B``
+broadcast to the Succorfish at the configured interval, optionally waiting to
+hear another modem id first for round-robin scheduling among multiple leaders.
 
 Lever-arm handling: rather than rotating the lever arm manually, we look up the
 modem and base origins in the world frame and take their difference. That
@@ -35,6 +37,7 @@ from rclpy.time import Time
 from rclpy.duration import Duration
 
 from serial_ping_pkg.utils import load_yaml_config
+from serial_ping_pkg.common.dccl_codec import pack_pose
 from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
 
@@ -73,11 +76,11 @@ class OwttLeaderNode(WireSafeSerialNode):
         self.declare_parameter('leader.modem_link_suffix', leader_cfg.get('modem_link_suffix', 'modem_link'))
         self.declare_parameter('leader.world_frame', leader_cfg.get('world_frame', 'map'))
         self.declare_parameter('leader.send_period_s', leader_cfg.get('send_period_s', 1.0))
-        # Stop pushing $G if the position topic has been silent this long.
+        # Stop pushing $K if the position topic has been silent this long.
         self.declare_parameter(
             'leader.max_position_age_s',
             leader_cfg.get('max_position_age_s', 5.0))
-        # Teensy $ZPAYLOADTTL — expire stored $G after N PPS epochs (0 = never).
+        # Teensy $ZPAYLOADTTL — expire stored $K after N PPS epochs (0 = never).
         self.declare_parameter(
             'teensy.payload_ttl_epochs',
             teensy_cfg.get('payload_ttl_epochs', 1))
@@ -115,7 +118,7 @@ class OwttLeaderNode(WireSafeSerialNode):
             self.get_logger().warn("Started in WIRE mode: Teensy is transparent, leader is passive.")
             return
 
-        # Put the Teensy into transmitter mode; gate $G on #Y,OK (not merely #A).
+        # Put the Teensy into transmitter mode; gate $K on #Y,OK (not merely #A).
         self.arm_config_retry(ti.build_config_command(
             ti.TeensyMode.TRANSMITTER,
             self.own_modem_id,
@@ -153,7 +156,7 @@ class OwttLeaderNode(WireSafeSerialNode):
             self._position_stale = False
             self.get_logger().warn(
                 f"Position topic {self.latlon_topic!r} resumed; "
-                "resuming $G pushes to Teensy.")
+                "resuming $K pose pushes to Teensy.")
 
     def _tf_frame_ids(self):
         """Return the set of frame ids currently known to the tf tree."""
@@ -262,7 +265,7 @@ class OwttLeaderNode(WireSafeSerialNode):
             self._apply_payload_ttl()
 
     def _apply_payload_ttl(self):
-        """Push Teensy $G expiry so a dead host cannot keep stale acoustics on air."""
+        """Push Teensy payload expiry so a dead host cannot keep stale acoustics on air."""
         if self._payload_ttl_sent:
             return
         self.send_command(f'$ZPAYLOADTTL={int(self.payload_ttl_epochs)}')
@@ -276,7 +279,7 @@ class OwttLeaderNode(WireSafeSerialNode):
         if not self.config_confirmed:
             self.get_logger().info(
                 f"Waiting for Teensy config confirmation ({self._expected_ok_prefix}…) "
-                "before sending GPS...", throttle_duration_sec=5.0)
+                "before sending pose...", throttle_duration_sec=5.0)
             return
         if not self._payload_ttl_sent:
             self._apply_payload_ttl()
@@ -289,14 +292,18 @@ class OwttLeaderNode(WireSafeSerialNode):
                 self._position_stale = True
                 self.get_logger().warn(
                     f"Position topic {self.latlon_topic!r} silent for {age_s:.1f}s "
-                    f"(limit {self.max_position_age_s:.1f}s); stopping $G pushes to Teensy.")
+                    f"(limit {self.max_position_age_s:.1f}s); stopping $K pose pushes to Teensy.")
             return
         lat = self.latest_position.latitude
         lon = self.latest_position.longitude
         modem_lat, modem_lon = self._apply_offset(lat, lon)
-        cmd = ti.build_gps_command(modem_lat, modem_lon)
         try:
-            self.send_command(cmd)
+            blob = pack_pose(modem_lat, modem_lon)
+        except Exception as e:
+            self.get_logger().error(f"DCCL Pose pack failed: {e}")
+            return
+        try:
+            self.send_command(ti.build_telemetry_command(blob))
         except Exception as e:
             self.get_logger().error(f"Serial communication error: {e}")
 

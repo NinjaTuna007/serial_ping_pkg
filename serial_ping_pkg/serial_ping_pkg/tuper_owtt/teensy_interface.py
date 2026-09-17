@@ -13,10 +13,16 @@ Wire format (per the Teensy firmware, OWTT_Modem_LoLo_ver1):
               ``$Y101R``         set address 101, RECEIVER mode
               ``$Y042T0001s``    address 042, TRANSMITTER, listen 000 (first), every 1 epoch
               ``$Y042T0074s``    address 042, TRANSMITTER, wait for 007, every 4 epochs
-    GPS:      ``$G<lat>,<lon>``  (transmitter mode only; updates stored GPS, not forwarded)
-    Broadcast (Teensy -> modem, automatic): ``$Bnn<lat>,<lon>``
-    Modem broadcast relayed to host: ``#B<id(3)><nn(2)><data>`` e.g. ``#B00722<lat>,<lon>``
-    OWTT delta (after a GPS-bearing modem line): ``#I<delta_us>``
+    GPS:      ``$G<lat>,<lon>``  (transmitter mode only; ASCII store, not forwarded)
+    Telemetry: ``$K<nn><payload>`` (opaque host bytes; Teensy stores as-is)
+    Broadcast (Teensy -> modem, automatic): ``$Bnn…`` (envelope + application)
+    Modem broadcast relayed to host: ``#B<id(3)><nn(2)><data>``
+    OWTT delta (after a timed modem line): ``#I<delta_us>``
+
+Stick GPS on air is host-packed DCCL ``Pose`` (id 125) sent as ``$K``. The
+Teensy does not encode or prefix ``TEL:``; it shunts those bytes and does
+timing. ``$G`` remains a valid ASCII store command but the OWTT leader does
+not use it. RX may still strip a leftover ``TEL:`` from mixed-flash boxes.
 """
 
 from enum import Enum
@@ -87,12 +93,9 @@ def build_gps_command(lat, lon, prefix="$G"):
     return f'{prefix}{format_latlon(lat, lon)}'
 
 
-# Marker that the Teensy prepends to a telemetry broadcast payload. A received
-# broadcast whose *application* data starts with this marker is a telemetry
-# frame (and the Teensy still emits an #I timing line for it, so it is
-# range-able). A multi-char marker (vs a bare 'T') avoids mistaking ordinary
-# broadcast data for telemetry — and also avoids colliding with the stick-v1
-# absolute-time envelope which likewise starts with ``T``.
+# Leftover ASCII type tag. Current firmware does not prefix ``TEL:`` on ``$K``.
+# RX still strips it when present so one box can be flashed before the other,
+# and unwrap treats a bare ``TEL:…`` as application (not a ``T<ss>|`` envelope).
 TELEMETRY_MARKER = "TEL:"
 
 # stick-v1 / LOLO_ver3 on-air envelope (before the application payload):
@@ -102,7 +105,7 @@ TELEMETRY_MARKER = "TEL:"
 # redundant because propagation is only a few seconds; the Teensy resolves the
 # minute against its own UTC. holdover is emitted only when non-zero (TX
 # free-running); locked transmitters omit the field. Application (``lat,lon``
-# or ``TEL:…``) follows. ROS ranging uses Teensy ``#I`` (absolute OWTT), so
+# or opaque DCCL) follows. ROS ranging uses Teensy ``#I`` (absolute OWTT), so
 # nodes unwrap this and ignore the TX stamp unless a caller asks.
 
 
@@ -128,8 +131,8 @@ def unwrap_timestamp_envelope(data):
     """Strip a stick-v1 TX timestamp envelope if present.
 
     Returns ``(meta, application)``. When ``data`` is not enveloped (legacy
-    bare ``lat,lon``, ``TEL:…``, ``START``, …), ``meta`` is ``None`` and
-    ``application`` is ``data`` unchanged.
+    bare ``lat,lon``, leftover ``TEL:…``, ``START``, …), ``meta`` is ``None``
+    and ``application`` is ``data`` unchanged.
 
     ``data`` may be ``str`` or ``bytes``. A binary application slot (DCCL)
     is returned as ``bytes``; ASCII application is returned as ``str``.
@@ -218,12 +221,13 @@ def build_telemetry_command(payload, prefix="$K"):
 
     ``$K`` is used (not ``$T``) because ``$T`` is a Succorfish modem command.
     ``nn`` is the two-digit byte length of ``payload`` (same rule as ``$B``),
-    so a DCCL blob may contain CR/LF/NUL. The Teensy stores this with a
-    leading ``TEL:`` marker and broadcasts it on the PPS schedule.
+    so a DCCL blob may contain CR/LF/NUL. The Teensy stores the bytes as-is
+    and broadcasts them on the PPS schedule (envelope + application).
 
-    ``payload`` must NOT include the ``TEL:`` marker. ``bytes`` return
-    ``bytes`` (caller uses ``write_bytes``); an all-ASCII ``str`` still
-    returns ``str`` for the old newline path, but prefer ``bytes``.
+    ``payload`` is the application (DCCL id byte, or ASCII ``lat,lon``). Do
+    not prepend ``TEL:``. ``bytes`` return ``bytes`` (caller uses
+    ``write_bytes``); an all-ASCII ``str`` still returns ``str`` for the old
+    newline path, but prefer ``bytes``.
     """
     raw = _as_bytes(payload)
     cmd = prefix.encode('ascii') + f'{len(raw):02d}'.encode('ascii') + raw
@@ -255,7 +259,7 @@ def parse_broadcast_payload(line, prefix="#B"):
 
     Format: ``#B<modem_id(3)><num_chars(2)><data>``. ``data`` may be a stick-v1
     timestamp envelope; this returns the *application* payload after unwrapping
-    (legacy ``lat,lon``, ``TEL:…``, control words, or a binary blob).
+    (legacy ``lat,lon``, leftover ``TEL:…``, control words, or a binary blob).
 
     ``line`` may be ``str`` or ``bytes``. Application is ``str`` when ASCII,
     ``bytes`` when not. Returns ``None`` if the frame is not a parseable broadcast.
@@ -329,7 +333,8 @@ def parse_broadcast(line, prefix="#B"):
     is ``lat,lon`` (optionally inside a stick-v1 timestamp envelope).
 
     Returns ``(modem_id, lat, lon)`` or ``None`` if the line is not a parseable
-    GPS broadcast (including telemetry ``TEL:`` frames).
+    ASCII GPS broadcast (including leftover ``TEL:`` frames). DCCL Pose is
+    handled by ``parse_broadcast_position``.
     """
     parsed = parse_broadcast_payload(line, prefix=prefix)
     if parsed is None:
@@ -345,6 +350,56 @@ def parse_broadcast(line, prefix="#B"):
         return modem_id, float(parts[0]), float(parts[1])
     except ValueError:
         return None
+
+
+_POSE_DECODE_ERROR = None
+
+
+def _pose_from_application(data):
+    """Decode a DCCL ``Pose`` from application bytes (strip leftover ``TEL:``)."""
+    global _POSE_DECODE_ERROR
+    _POSE_DECODE_ERROR = None
+    raw = _as_bytes(data)
+    marker = TELEMETRY_MARKER.encode('ascii')
+    if raw.startswith(marker):
+        raw = raw[len(marker):]
+    if len(raw) < 2:
+        _POSE_DECODE_ERROR = 'short application'
+        return None
+    try:
+        from serial_ping_pkg.common.dccl_codec import unpack
+        msg = unpack(raw)
+    except Exception as exc:
+        _POSE_DECODE_ERROR = f'{type(exc).__name__}: {exc}'
+        return None
+    # libdccl may return a dynamically loaded class, not dccl_acoustic_pb2.Pose.
+    name = getattr(getattr(msg, 'DESCRIPTOR', None), 'name', None)
+    if name != 'Pose':
+        _POSE_DECODE_ERROR = f'not Pose ({name!r})'
+        return None
+    return float(msg.lat), float(msg.lon)
+
+
+def parse_broadcast_position(line, prefix="#B"):
+    """Leader position from a relayed ``#B``: ASCII ``lat,lon`` or DCCL Pose.
+
+    Stick GPS on air is packed ``Pose`` after the envelope. Legacy ASCII
+    ``lat,lon`` still decodes. Beacon ``BeaconTelemetry`` and leftover
+    ``TEL:`` blobs that are not Pose return ``None`` here (surface unit owns
+    those).
+    """
+    ascii_gps = parse_broadcast(line, prefix=prefix)
+    if ascii_gps is not None:
+        return ascii_gps
+    parsed = parse_broadcast_payload(line, prefix=prefix)
+    if parsed is None:
+        return None
+    modem_id, data = parsed
+    pose = _pose_from_application(data)
+    if pose is None:
+        return None
+    lat, lon = pose
+    return modem_id, lat, lon
 
 
 def import_message_type(type_str):

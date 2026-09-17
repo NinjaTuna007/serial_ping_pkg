@@ -156,7 +156,7 @@ sudo apt install python3-dccl4 libdccl4
 ```
 
 `rosdep -r` will warn that it cannot resolve `python3-dccl4` / `libdccl4`; that
-is expected. `beacon.codec:=ascii` (tagged `TEL:`) does not need libdccl.
+is expected. `beacon.codec:=ascii` (tagged `P…`) does not need libdccl.
 
 If apt is not an option, extract the GobySoft debs to `~/.local/opt/dccl4` (or
 set `DCCL4_PREFIX`) so `dccl_codec` can find `libdccl.so` and the Python

@@ -21,10 +21,10 @@ beacon, publishing a `sensor_msgs/NavSatFix` for visualisation (e.g. Foxglove).
 
 1. **Beacon** subscribes to its telemetry sources, encodes the enabled fields
   (default: bt tip only) into a compact payload, and sends `$K<nn><payload>` to
-   its Teensy (transmitter mode). The Teensy prepends the `TEL:` telemetry marker
-   and broadcasts `$BnnTEL:<payload>` on its PPS/OCXO schedule.
+   its Teensy (transmitter mode). The Teensy stores those bytes as-is and
+   broadcasts `$Bnn<envelope><payload>` on its PPS/OCXO schedule.
 2. **Surface units** (receiver mode) get the relayed broadcast
-  `#B<id><nn>TEL:<payload>` followed by the timing line `#I<delta_us>`. They
+  `#B<id><nn><envelope><payload>` followed by the timing line `#I<delta_us>`. They
    decode the telemetry **in memory** (a Python dict — they do not parse their
    own ROS JSON topic to compute range). They compute
    `range = (delta_us - offset_us) * 1e-6 * c`, publish range on ROS, and
@@ -37,11 +37,11 @@ beacon, publishing a `sensor_msgs/NavSatFix` for visualisation (e.g. Foxglove).
 
 ## Telemetry frame
 
-The payload after the Teensy's `TEL:` marker is chosen by `beacon.codec`
-(beacon and surface unit must match):
+The application after the Teensy's timestamp envelope is chosen by
+`beacon.codec` (beacon and surface unit must match):
 
-| `beacon.codec` | After `TEL:` | Needs |
-|----------------|--------------|-------|
+| `beacon.codec` | Application | Needs |
+|----------------|-------------|-------|
 | `dccl` (default) | `libdccl` `BeaconTelemetry` (id 124) + CRC-8-ATM trailer | `python3-dccl4` |
 | `ascii` | tagged `P<lat>,<lon>;D<m>;C<svs>;S<speed>;B<bt>` | nothing extra |
 
@@ -61,16 +61,18 @@ inference hop consumes the same object inside the MQTT range-report JSON.
 START/STOP/OK stay ASCII keywords (they are already tiny).
 
 Keep it small — the Succorfish NM3 caps a packet at **64 bytes** (timestamp
-envelope + `TEL:` + DCCL + CRC-8). The beacon enforces this via
+envelope + DCCL + CRC-8). The beacon enforces this via
 `max_onair_bytes`. To save bytes the `bt` tip is reduced to the action-client
 name (`bt_name_only`), last path segment (`bt_basename`), with `A_` stripped
 (`bt_strip_prefix`). Proto `max_length` for `bt` is 16. The **default field
 set is `bt` only**.
 
 > Firmware note: `$K` is the host→Teensy command prefix (it would collide with
-> the modem's own `$T`), while `TEL:` is the on-air payload marker the receivers
-> look for. The Teensy emits `#I` timing for any `TEL:`-marked broadcast, so
-> telemetry frames are range-able.
+> the modem's own `$T`). The Teensy shunts those opaque bytes on air (envelope
+> + application). Type is the DCCL id byte, or ASCII `lat,lon` / tagged `P…`.
+> `#I` is emitted for any timestamped broadcast once UTC is bound; it does not
+> require a `TEL:` marker. RX may still strip leftover `TEL:` from mixed-flash
+> boxes.
 
 ## Serial link (succorfish_driver)
 
@@ -300,7 +302,7 @@ overridable as a launch argument.
 | `mode`                                           | `transmitter`                                          | `transmitter`                                                        |
 | `beacon_name`                                    | `lolo`                                                 | telemetry-source namespace                                           |
 | `telemetry_fields`                               | `['bt']`                                               | subset of `position`/`depth`/`svs`/`speed`/`bt`                      |
-| `codec`                                          | `dccl`                                                 | `dccl` (DCCL+CRC-8) or `ascii` (tagged `TEL:`); must match the surface unit |
+| `codec`                                          | `dccl`                                                 | `dccl` (DCCL+CRC-8) or `ascii` (tagged `P…`); must match the surface unit |
 | `latlon_topic` / `depth_topic` / `speed_topic`   | derived                                                | override telemetry source topics                                     |
 | `svs_topic` / `svs_msg_type` / `svs_field`       | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | sound-velocity source                                                |
 | `bt_topic` / `bt_json_field`                     | derived / `tip`                                        | bt source + JSON field                                               |
@@ -309,7 +311,7 @@ overridable as a launch argument.
 | `bt_strip_prefix`                                | `A_`                                                   | strip this leading prefix from the bt name (`A_Chilling`→`Chilling`) |
 | `position_precision`                             | `7`                                                    | lat/lon decimals in **ascii** payloads (`ascii_on_air.LATLON_DECIMALS`; DCCL uses proto 7 dp) |
 | `max_bt_len`                                     | `32`                                                   | bt text cap (DCCL proto `max_length` is 16)                          |
-| `max_onair_bytes`                                | `64`                                                   | modem packet cap; `TEL:`+payload auto-trimmed to fit                 |
+| `max_onair_bytes`                                | `64`                                                   | modem packet cap; encoded payload auto-trimmed to fit                |
 | `send_period_s`                                  | `1.0`                                                  | **telemetry broadcast interval** (how often `$K` is pushed)          |
 | `position_seed_count`                            | `0`                                                    | include GPS in first N broadcasts then drop it                       |
 | `autostart`                                      | `false`                                                | begin broadcasting without waiting for `START`                       |

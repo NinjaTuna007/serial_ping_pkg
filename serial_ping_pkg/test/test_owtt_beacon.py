@@ -94,18 +94,19 @@ def test_encode_only_enabled_fields():
 
 
 def test_strip_marker_present_and_absent():
-    """strip_marker returns the post-marker payload, or None for plain data."""
+    """strip_marker strips leftover TEL:; unmarked payload is returned as-is."""
     assert strip_marker("TEL:P1,2") == "P1,2"
-    assert strip_marker("58.1,18.2") is None
+    assert strip_marker("P1,2") == "P1,2"
     blob = encode_telemetry(['bt'], bt='hi')
+    assert strip_marker(blob) == blob
     rest = strip_marker(b'TEL:' + blob)
     assert rest == blob
 
 
 def test_strip_marker_after_envelope_unwrap():
-    """Surface units see TEL: after parse_broadcast_payload unwraps the envelope."""
+    """Surface units decode application bytes after unwrap (no TEL: required)."""
     from serial_ping_pkg.tuper_owtt import teensy_interface as ti
-    app = 'TEL:P58.8,17.6'
+    app = 'P58.8,17.6'
     payload = f'T04|0001|P|{app}'
     frame = f'#B101{len(payload):02d}{payload}'
     modem_id, data = ti.parse_broadcast_payload(frame)
@@ -295,7 +296,7 @@ def test_owtt_beacon_configures_and_acks_start():
 @_skip
 @pytest.mark.skipif(exe('owtt_surface_unit_node') is None, reason="node not built")
 def test_owtt_surface_unit_publishes_range():
-    """Surface unit: receiver config, then TEL telemetry + #I delta -> a ROS range."""
+    """Surface unit: receiver config, then DCCL telemetry + #I delta -> a ROS range."""
     from std_msgs.msg import Float32, String
 
     st = Stack(responder=teensy_responder, profile='teensy').start_driver()
@@ -311,8 +312,7 @@ def test_owtt_surface_unit_publishes_range():
         f"no receiver config; got {st.fake.commands()!r}"
     time.sleep(0.5)
     blob = encode_telemetry(['svs'], svs=1500.0)     # default DCCL+CRC-8
-    app = b'TEL:' + blob
-    st.fake.inject(b'#B101' + f'{len(app):02d}'.encode('ascii') + app)
+    st.fake.inject(b'#B101' + f'{len(blob):02d}'.encode('ascii') + blob)
     got_tel = wait_until(lambda: len(telems) > 0, timeout=8)
     st.fake.inject('#I871600')                       # (871600-771600)*1e-6*1500 = 150 m
     ok = wait_until(lambda: len(ranges) > 0, timeout=8)
@@ -325,7 +325,7 @@ def test_owtt_surface_unit_publishes_range():
 @_skip
 @pytest.mark.skipif(exe('owtt_surface_unit_node') is None, reason="node not built")
 def test_owtt_surface_unit_publishes_range_ascii_codec():
-    """codec:=ascii still accepts tagged TEL:C1500.0 bags."""
+    """codec:=ascii still accepts tagged C1500.0 bags (no TEL: prefix)."""
     from std_msgs.msg import Float32
 
     st = Stack(responder=teensy_responder, profile='teensy').start_driver()
@@ -340,7 +340,7 @@ def test_owtt_surface_unit_publishes_range_ascii_codec():
     assert st.fake.wait_for_command('$Y067R', timeout=8), \
         f"no receiver config; got {st.fake.commands()!r}"
     time.sleep(0.5)
-    payload = 'TEL:C1500.0'
+    payload = 'C1500.0'
     st.fake.inject(f'#B101{len(payload):02d}{payload}')
     st.fake.inject('#I871600')
     ok = wait_until(lambda: len(ranges) > 0, timeout=8)

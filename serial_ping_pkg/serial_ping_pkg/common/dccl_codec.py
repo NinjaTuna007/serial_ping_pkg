@@ -4,7 +4,7 @@ Schema lives in ``serial_ping_pkg/proto/dccl_acoustic.proto``. This module is th
 only place nodes should touch ``libdccl``. Transmit/receive logic fills a dict
 (or protobuf), calls ``pack`` / ``unpack``, and writes the bytes.
 
-Wire layout after the Teensy ``TEL:`` marker::
+Wire layout (after the Teensy timestamp envelope; no ``TEL:`` tag)::
 
     <dccl bytes, first byte is the message id> <crc8>
 
@@ -102,6 +102,10 @@ def _codec():
     if _CODEC is not None:
         return _CODEC
     _ensure_dccl()
+    # Generated stubs must be imported before decode. libdccl looks up the
+    # Python class by name; encode-only callers (pack_pose / beacon TX) already
+    # import them, but a follower that only unpacks does not.
+    from serial_ping_pkg.common import dccl_acoustic_pb2 as _pb  # noqa: F401
     for candidate in (_PREFIX / 'usr' / 'include', Path('/usr/include')):
         if (candidate / 'dccl' / 'option_extensions.proto').is_file():
             dccl.addProtoIncludePath(str(candidate))
@@ -124,6 +128,16 @@ def pack(msg):
     else:
         encoded = bytes(encoded)
     return encoded + bytes([crc8_atm(encoded)])
+
+
+def pack_pose(lat, lon, depth=None):
+    """Encode a ``Pose`` (id 125) plus CRC-8. Depth is omitted unless given."""
+    _ensure_dccl()
+    from serial_ping_pkg.common import dccl_acoustic_pb2 as pb
+    msg = pb.Pose(lat=float(lat), lon=float(lon))
+    if depth is not None:
+        msg.depth = float(depth)
+    return pack(msg)
 
 
 def unpack(blob):

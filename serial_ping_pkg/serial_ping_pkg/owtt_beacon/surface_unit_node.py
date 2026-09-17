@@ -4,7 +4,7 @@ A surface unit listens (Teensy in *receiver* mode) for the beacon's telemetry
 broadcasts. For each telemetry frame it:
 
   1. decodes the telemetry payload with ``beacon.codec`` (default ``dccl``;
-     set ``ascii`` for tagged ``TEL:`` bags — must match the beacon),
+     set ``ascii`` for tagged ``P…`` bags — must match the beacon),
   2. turns the paired ``#I<delta_us>`` line into a one-way-travel-time range::
 
          range = (delta_us - offset_us) * 1e-6 * sound_velocity

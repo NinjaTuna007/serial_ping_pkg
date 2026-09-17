@@ -84,7 +84,7 @@ def test_parse_broadcast_timestamped_gps():
 
 
 def test_unwrap_timestamp_envelope_meta():
-    """Envelope meta is available; TEL: and legacy GPS are left alone."""
+    """Envelope meta is available; leftover TEL: and legacy GPS are left alone."""
     payload = 'T04|003A|P|59.1,18.2'
     meta, app = ti.unwrap_timestamp_envelope(payload)
     assert app == '59.1,18.2'
@@ -111,11 +111,12 @@ def test_unwrap_timestamp_envelope_holdover():
 
 
 def test_parse_broadcast_timestamped_telemetry_not_gps():
-    """TEL: frames (even enveloped) are not treated as lat/lon broadcasts."""
+    """Leftover ASCII TEL: frames (even enveloped) are not treated as lat/lon."""
     app = 'TEL:P58.8,17.6;D1.0'
     payload = f'T04|0001|H|0000000B|{app}'
     frame = f'#B101{len(payload):02d}{payload}'
     assert ti.parse_broadcast(frame) is None
+    assert ti.parse_broadcast_position(frame) is None
     assert ti.parse_broadcast_payload(frame) == ('101', app)
 
 
@@ -142,9 +143,38 @@ def test_parse_broadcast_bytes_and_binary_application():
     blob = b'T04|0001|P|' + b'\xff\x00\x0a\x7f'
     framed = b'#B002' + f'{len(blob):02d}'.encode('ascii') + blob
     assert ti.parse_broadcast(framed) is None
+    assert ti.parse_broadcast_position(framed) is None
     modem_id, app = ti.parse_broadcast_payload(framed)
     assert modem_id == '002'
     assert app == b'\xff\x00\x0a\x7f'
+
+
+def test_parse_broadcast_position_dccl_pose():
+    """Stick GPS on air is DCCL Pose after the envelope; ASCII lat,lon still works."""
+    from serial_ping_pkg.common.dccl_codec import pack_pose
+
+    blob = pack_pose(59.34837037, 18.07220699)
+    payload = b'T04|003A|P|' + blob
+    frame = b'#B002' + f'{len(payload):02d}'.encode('ascii') + payload
+    assert ti.parse_broadcast(frame) is None
+    got = ti.parse_broadcast_position(frame)
+    assert got is not None
+    modem_id, lat, lon = got
+    assert modem_id == '002'
+    assert lat == pytest.approx(59.34837037, abs=5e-8)
+    assert lon == pytest.approx(18.07220699, abs=5e-8)
+    assert ti.build_telemetry_command(blob).startswith(b'$K')
+
+    leftover = b'T04|003A|P|' + b'TEL:' + blob
+    leftover_frame = b'#B002' + f'{len(leftover):02d}'.encode('ascii') + leftover
+    leftover_got = ti.parse_broadcast_position(leftover_frame)
+    assert leftover_got is not None
+    assert leftover_got[1] == pytest.approx(59.34837037, abs=5e-8)
+
+    from serial_ping_pkg.owtt_beacon.beacon_telemetry import encode_telemetry
+    telem = encode_telemetry(['position'], position=(59.0, 18.0))
+    telem_frame = b'#B101' + f'{len(telem):02d}'.encode('ascii') + telem
+    assert ti.parse_broadcast_position(telem_frame) is None
 
 
 def test_build_broadcast_command_bytes():
@@ -258,10 +288,38 @@ def test_owtt_follower_publishes_position_and_range():
     assert ranges[0].data == pytest.approx(225.0, rel=1e-3)
 
 
+@_skip_owtt
+def test_owtt_follower_publishes_dccl_pose_and_range():
+    """Same #B/#I path with host-packed DCCL Pose after the envelope."""
+    from geographic_msgs.msg import GeoPoint
+    from std_msgs.msg import Float32
+    from serial_ping_pkg.common.dccl_codec import pack_pose
+
+    st = Stack(responder=teensy_responder, profile='teensy').start_driver()
+    st.start_probe()
+    positions = st.probe.collect(GeoPoint, '/owtt/leader1/smarc/latlon')
+    ranges = st.probe.collect(Float32, '/owtt/leader1/distance')
+    st.start_node(exe('owtt_follower_node'),
+                  ['-p', 'follower.leader1_modem_id:=7', '-p', 'owtt.offset_us:=0.0'])
+    assert st.fake.wait_for_command(lambda c: c.endswith('R'), timeout=6.0)
+    time.sleep(0.5)
+    payload = b'T04|003A|P|' + pack_pose(59.1, 18.8)
+    st.fake.inject(b'#B007' + f'{len(payload):02d}'.encode('ascii') + payload)
+    got_pos = wait_until(lambda: len(positions) > 0, timeout=8.0)
+    st.fake.inject('#I150000')
+    got_rng = wait_until(lambda: len(ranges) > 0, timeout=8.0)
+    node_out, _ = st.stop()
+    assert got_pos, f"no DCCL position published; out:\n{node_out}"
+    assert got_rng, f"no range after DCCL pose; out:\n{node_out}"
+    assert positions[0].latitude == pytest.approx(59.1, abs=5e-8)
+    assert positions[0].longitude == pytest.approx(18.8, abs=5e-8)
+    assert ranges[0].data == pytest.approx(225.0, rel=1e-3)
+
+
 @pytest.mark.skipif(not DRIVER_AVAILABLE or exe('owtt_leader_node') is None,
                     reason="serial_ping_pkg / succorfish_driver not built/sourced")
 def test_leader_waits_for_ack():
-    """The leader withholds $G until it sees #Y,OK,<id>, then proceeds.
+    """The leader withholds $K until it sees #Y,OK,<id>, then proceeds.
 
     Full-stack: the leader's config goes leader -> driver -> pty, and the ack we
     inject on the pty flows pty -> driver RX -> leader. A bare #A is not enough.
@@ -274,17 +332,17 @@ def test_leader_waits_for_ack():
          '-p', 'leader.send_period_s:=0.5'])
     assert st.fake.wait_for_command('$Y042T0004s', timeout=6.0), \
         f"never saw transmitter config; got {st.fake.commands()!r}"
-    # Before the mode-apply OK, the leader must NOT have started sending GPS.
+    # Before the mode-apply OK, the leader must NOT have started sending pose.
     time.sleep(1.5)
     before_ack = st.fake.commands()
-    st.fake.inject('#A042')  # modem address only — must not release $G
+    st.fake.inject('#A042')  # modem address only — must not release $K
     time.sleep(1.0)
     mid = st.fake.commands()
-    assert not any(c.startswith('$G') for c in mid), \
-        f"leader sent $G after #A alone: {mid!r}"
+    assert not any(c.startswith('$K') or c.startswith('$G') for c in mid), \
+        f"leader sent pose after #A alone: {mid!r}"
     st.fake.inject('#Y,OK,042,T,000,4')
     time.sleep(1.5)  # let the leader process the OK and start
     out, _ = st.stop()
-    assert not any(c.startswith('$G') for c in before_ack), \
-        f"leader sent $G before the ack: {before_ack!r}"
+    assert not any(c.startswith('$K') or c.startswith('$G') for c in before_ack), \
+        f"leader sent pose before the ack: {before_ack!r}"
     assert 'Teensy config confirmed: #Y,OK,042,T,000,4' in out
