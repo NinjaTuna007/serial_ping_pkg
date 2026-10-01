@@ -66,25 +66,26 @@ def test_gps_command():
 
 
 def test_parse_broadcast_latlon():
-    """A well-formed ``#B`` frame yields (modem_id, lat, lon)."""
+    """ASCII lat,lon is not an OWTT position. The payload text is still returned."""
     data = '59.12345678,18.87654321'
     frame = '#B007%02d%s' % (len(data), data)
-    assert ti.parse_broadcast(frame) == ('007', 59.12345678, 18.87654321)
+    assert ti.parse_broadcast_position(frame) is None
+    assert ti.parse_broadcast_payload(frame) == ('007', data)
 
 
 def test_parse_broadcast_timestamped_gps():
-    """stick-v1 envelope is unwrapped before lat/lon are read."""
+    """stick-v1 envelope unwraps ASCII text, but that text is not a position."""
     app = '59.34837037,18.07220699'
     payload = f'T04|003A|P|{app}'
     frame = f'#B002{len(payload):02d}{payload}'
-    assert ti.parse_broadcast(frame) == ('002', 59.34837037, 18.07220699)
+    assert ti.parse_broadcast_position(frame) is None
     modem_id, data = ti.parse_broadcast_payload(frame)
     assert modem_id == '002'
     assert data == app
 
 
 def test_unwrap_timestamp_envelope_meta():
-    """Envelope meta is available; leftover TEL: and legacy GPS are left alone."""
+    """Envelope meta is available; a non-envelope buffer is left alone."""
     payload = 'T04|003A|P|59.1,18.2'
     meta, app = ti.unwrap_timestamp_envelope(payload)
     assert app == '59.1,18.2'
@@ -111,23 +112,22 @@ def test_unwrap_timestamp_envelope_holdover():
 
 
 def test_parse_broadcast_timestamped_telemetry_not_gps():
-    """Leftover ASCII TEL: frames (even enveloped) are not treated as lat/lon."""
-    app = 'TEL:P58.8,17.6;D1.0'
+    """Tagged ASCII after the envelope is not an OWTT position."""
+    app = 'P58.8,17.6;D1.0'
     payload = f'T04|0001|H|0000000B|{app}'
     frame = f'#B101{len(payload):02d}{payload}'
-    assert ti.parse_broadcast(frame) is None
     assert ti.parse_broadcast_position(frame) is None
     assert ti.parse_broadcast_payload(frame) == ('101', app)
 
 
 def test_parse_broadcast_bad_length():
     """A length field that does not match the payload is rejected."""
-    assert ti.parse_broadcast('#B00799,18') is None
+    assert ti.parse_broadcast_payload('#B00799,18') is None
 
 
 def test_parse_broadcast_non_broadcast():
     """Non-``#B`` lines are not treated as broadcasts."""
-    assert ti.parse_broadcast('#I123') is None
+    assert ti.parse_broadcast_payload('#I123') is None
 
 
 def test_parse_broadcast_bytes_and_binary_application():
@@ -135,14 +135,13 @@ def test_parse_broadcast_bytes_and_binary_application():
     gps = '59.1234567,18.7654321'
     payload = f'T04|003A|P|{gps}'
     frame = f'#B007{len(payload):02d}{payload}'.encode('ascii')
-    assert ti.parse_broadcast(frame) == ('007', 59.1234567, 18.7654321)
+    assert ti.parse_broadcast_position(frame) is None
     modem_id, app = ti.parse_broadcast_payload(frame)
     assert modem_id == '007'
     assert app == gps
 
     blob = b'T04|0001|P|' + b'\xff\x00\x0a\x7f'
     framed = b'#B002' + f'{len(blob):02d}'.encode('ascii') + blob
-    assert ti.parse_broadcast(framed) is None
     assert ti.parse_broadcast_position(framed) is None
     modem_id, app = ti.parse_broadcast_payload(framed)
     assert modem_id == '002'
@@ -150,13 +149,12 @@ def test_parse_broadcast_bytes_and_binary_application():
 
 
 def test_parse_broadcast_position_dccl_pose():
-    """Stick GPS on air is DCCL Pose after the envelope; ASCII lat,lon still works."""
+    """Stick GPS on air is DCCL Pose after the envelope."""
     from serial_ping_pkg.common.dccl_codec import pack_pose
 
     blob = pack_pose(59.34837037, 18.07220699)
     payload = b'T04|003A|P|' + blob
     frame = b'#B002' + f'{len(payload):02d}'.encode('ascii') + payload
-    assert ti.parse_broadcast(frame) is None
     got = ti.parse_broadcast_position(frame)
     assert got is not None
     modem_id, lat, lon = got
@@ -165,11 +163,9 @@ def test_parse_broadcast_position_dccl_pose():
     assert lon == pytest.approx(18.07220699, abs=5e-8)
     assert ti.build_telemetry_command(blob).startswith(b'$K')
 
-    leftover = b'T04|003A|P|' + b'TEL:' + blob
-    leftover_frame = b'#B002' + f'{len(leftover):02d}'.encode('ascii') + leftover
-    leftover_got = ti.parse_broadcast_position(leftover_frame)
-    assert leftover_got is not None
-    assert leftover_got[1] == pytest.approx(59.34837037, abs=5e-8)
+    prefixed = b'T04|003A|P|' + b'TEL:' + blob
+    prefixed_frame = b'#B002' + f'{len(prefixed):02d}'.encode('ascii') + prefixed
+    assert ti.parse_broadcast_position(prefixed_frame) is None
 
     from serial_ping_pkg.owtt_beacon.beacon_telemetry import encode_telemetry
     telem = encode_telemetry(['position'], position=(59.0, 18.0))
@@ -268,6 +264,7 @@ def test_owtt_follower_publishes_position_and_range():
     """
     from geographic_msgs.msg import GeoPoint
     from std_msgs.msg import Float32
+    from serial_ping_pkg.common.dccl_codec import pack_pose
 
     st = Stack(responder=teensy_responder, profile='teensy').start_driver()
     st.start_probe()
@@ -277,14 +274,14 @@ def test_owtt_follower_publishes_position_and_range():
                   ['-p', 'follower.leader1_modem_id:=7', '-p', 'owtt.offset_us:=0.0'])
     assert st.fake.wait_for_command(lambda c: c.endswith('R'), timeout=6.0)
     time.sleep(0.5)
-    data = '59.10000000,18.80000000'
-    st.fake.inject(f'#B007{len(data):02d}{data}')  # leader1 routed by modem id 007
+    data = pack_pose(59.1, 18.8)
+    st.fake.inject(b'#B007' + f'{len(data):02d}'.encode('ascii') + data)
     st.fake.inject('#I150000')                      # 150000 us * 1e-6 * 1500 = 225 m
     ok = wait_until(lambda: positions and ranges, timeout=8.0)
     node_out, _ = st.stop()
     assert ok, f"no position/range published; out:\n{node_out}"
-    assert positions[0].latitude == pytest.approx(59.1)
-    assert positions[0].longitude == pytest.approx(18.8)
+    assert positions[0].latitude == pytest.approx(59.1, abs=5e-8)
+    assert positions[0].longitude == pytest.approx(18.8, abs=5e-8)
     assert ranges[0].data == pytest.approx(225.0, rel=1e-3)
 
 

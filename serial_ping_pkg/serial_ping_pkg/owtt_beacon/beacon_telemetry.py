@@ -1,59 +1,31 @@
-"""Beacon telemetry codec: DCCL by default, tagged ASCII as a mode.
+"""Beacon telemetry codec: DCCL ``BeaconTelemetry`` (id 124) plus CRC-8-ATM.
 
-Application bytes after the Teensy timestamp envelope (no ``TEL:`` prefix).
-RX still strips a leftover ``TEL:`` if an unflashed box sends one.
-
-``codec='dccl'`` (default): ``libdccl`` ``BeaconTelemetry`` (id 124) plus a
-CRC-8-ATM trailer. ``codec='ascii'``: the older tagged string
-``P<lat>,<lon>;D<m>;…``. Beacon and surface unit must use the same mode.
+Application bytes sit after the Teensy timestamp envelope. Beacon and surface
+unit both use this encoding.
 """
 
-from serial_ping_pkg.common.ascii_on_air import (
-    LATLON_DECIMALS,
-    format_depth,
-    format_latlon,
-    format_speed,
-    format_svs,
-)
-
 CODEC_DCCL = 'dccl'
-CODEC_ASCII = 'ascii'
 DEFAULT_CODEC = CODEC_DCCL
 
-FIELD_TAGS = {
-    'position': 'P',
-    'depth': 'D',
-    'svs': 'C',
-    'speed': 'S',
-    'bt': 'B',
-}
-TAG_FIELDS = {tag: field for field, tag in FIELD_TAGS.items()}
-DEFAULT_FIELD_ORDER = ('position', 'depth', 'svs', 'speed', 'bt')
 _FORBIDDEN = (';', '\r', '\n')
 _TRIM_ORDER = ('bt', 'speed', 'depth', 'svs')
 _DCCL_BT_MAX = 16
 
 
 def normalize_codec(codec):
-    """Return ``'dccl'`` or ``'ascii'``. Default is DCCL."""
+    """Return ``'dccl'``. ``None`` and ``'dccl'`` are accepted."""
     name = DEFAULT_CODEC if codec is None else str(codec).strip().lower()
-    if name not in (CODEC_DCCL, CODEC_ASCII):
+    if name != CODEC_DCCL:
         raise ValueError(
-            f'beacon codec must be {CODEC_DCCL!r} or {CODEC_ASCII!r}, '
-            f'got {codec!r}')
+            f'beacon codec must be {CODEC_DCCL!r}, got {codec!r}')
     return name
 
 
 def require_codec_runtime(codec):
-    """Validate codec and load libdccl when the mode needs it.
-
-    ``ascii`` does not import libdccl. ``dccl`` fails here if the library is
-    missing, rather than on the first encode.
-    """
+    """Validate the codec and load libdccl before the first encode."""
     name = normalize_codec(codec)
-    if name == CODEC_DCCL:
-        from serial_ping_pkg.common.dccl_codec import _ensure_dccl
-        _ensure_dccl()
+    from serial_ping_pkg.common.dccl_codec import _ensure_dccl
+    _ensure_dccl()
     return name
 
 
@@ -63,51 +35,6 @@ def sanitize(text):
     for ch in _FORBIDDEN:
         s = s.replace(ch, ' ')
     return s.strip()
-
-
-def _encode_ascii(enabled_fields, position, depth, svs, speed, bt,
-                  precision, max_bt_len, max_payload_len):
-    if precision is None:
-        precision = LATLON_DECIMALS
-    enabled = set(enabled_fields)
-    tokens = {}
-    for field in DEFAULT_FIELD_ORDER:
-        if field not in enabled:
-            continue
-        if field == 'position' and position is not None:
-            lat, lon = position
-            tokens['position'] = 'P' + format_latlon(
-                lat, lon, decimals=precision)
-        elif field == 'depth' and depth is not None:
-            tokens['depth'] = 'D' + format_depth(depth)
-        elif field == 'svs' and svs is not None:
-            tokens['svs'] = 'C' + format_svs(svs)
-        elif field == 'speed' and speed is not None:
-            tokens['speed'] = 'S' + format_speed(speed)
-        elif field == 'bt' and bt is not None:
-            tokens['bt'] = 'B' + sanitize(bt)[:max_bt_len]
-
-    def assemble(toks):
-        return ';'.join(toks[f] for f in DEFAULT_FIELD_ORDER if f in toks)
-
-    payload = assemble(tokens)
-    if max_payload_len and len(payload) > max_payload_len:
-        if 'bt' in tokens:
-            over = len(payload) - max_payload_len
-            bt_text = tokens['bt'][1:]
-            kept = bt_text[:max(0, len(bt_text) - over)]
-            if kept:
-                tokens['bt'] = 'B' + kept
-            else:
-                tokens.pop('bt')
-            payload = assemble(tokens)
-        for field in _TRIM_ORDER:
-            if len(payload) <= max_payload_len:
-                break
-            if field in tokens:
-                tokens.pop(field)
-                payload = assemble(tokens)
-    return payload
 
 
 def _encode_dccl(enabled_fields, position, depth, svs, speed, bt,
@@ -160,61 +87,16 @@ def _encode_dccl(enabled_fields, position, depth, svs, speed, bt,
 def encode_telemetry(enabled_fields, position=None, depth=None, svs=None,
                      speed=None, bt=None, precision=None, max_bt_len=32,
                      max_payload_len=0, codec=DEFAULT_CODEC):
-    """Encode enabled telemetry fields.
+    """Encode enabled telemetry fields as DCCL bytes plus a CRC-8 trailer.
 
-    ``codec='dccl'`` (default) returns ``bytes`` (DCCL + CRC-8).
-    ``codec='ascii'`` returns a tagged ASCII ``str``.
+    ``precision`` is unused (DCCL precision lives in the proto). It remains
+    so existing call sites keep working.
     """
-    codec = normalize_codec(codec)
-    if codec == CODEC_ASCII:
-        return _encode_ascii(
-            enabled_fields, position, depth, svs, speed, bt,
-            precision, max_bt_len, max_payload_len)
+    del precision
+    normalize_codec(codec)
     return _encode_dccl(
         enabled_fields, position, depth, svs, speed, bt,
         max_bt_len, max_payload_len)
-
-
-def _decode_ascii(payload):
-    out = {}
-    if isinstance(payload, (bytes, bytearray)):
-        try:
-            payload = payload.decode('ascii')
-        except UnicodeDecodeError:
-            return None
-    if not payload:
-        return out
-    for token in payload.split(';'):
-        if not token:
-            continue
-        tag, value = token[0], token[1:]
-        field = TAG_FIELDS.get(tag)
-        if field == 'position':
-            try:
-                lat_s, lon_s = value.split(',')
-                out['position'] = (float(lat_s), float(lon_s))
-            except ValueError:
-                pass
-        elif field == 'depth':
-            try:
-                out['depth'] = float(value)
-            except ValueError:
-                pass
-        elif field == 'svs':
-            try:
-                out['svs'] = float(value)
-            except ValueError:
-                pass
-        elif field == 'speed':
-            try:
-                out['speed'] = float(value)
-            except ValueError:
-                pass
-        elif field == 'bt':
-            out['bt'] = value
-        else:
-            out.setdefault('unknown', {})[tag] = value
-    return out
 
 
 def _decode_dccl(payload):
@@ -245,39 +127,11 @@ def _decode_dccl(payload):
 
 
 def decode_telemetry(payload, codec=DEFAULT_CODEC):
-    """Decode post-marker payload to a dict of telemetry values.
+    """Decode a DCCL telemetry payload to a dict.
 
-    Uses the same ``codec`` as encode (default DCCL). Returns ``None`` if
-    decode fails. Returns ``{}`` for empty input.
+    Returns ``None`` if decode fails. Returns ``{}`` for empty input.
     """
     if payload is None or payload == b'' or payload == '':
         return {}
-    codec = normalize_codec(codec)
-    if codec == CODEC_ASCII:
-        return _decode_ascii(payload)
+    normalize_codec(codec)
     return _decode_dccl(payload)
-
-
-def strip_marker(data, marker='TEL:'):
-    """Return the telemetry payload; strip leftover ``TEL:`` if present.
-
-    Firmware no longer prefixes ``TEL:``. Without a marker the payload is
-    returned unchanged so ``codec:=ascii`` tagged ``P…`` still decodes.
-    Binary leftover ``TEL:`` + DCCL stays ``bytes``; ASCII ``TEL:…`` stays
-    ``str``.
-    """
-    if data is None:
-        return None
-    if isinstance(data, (bytes, bytearray)):
-        raw = bytes(data)
-        m = marker.encode('ascii')
-        if raw.startswith(m) and len(raw) > len(m):
-            rest = raw[len(m):]
-            try:
-                return rest.decode('ascii')
-            except UnicodeDecodeError:
-                return rest
-        return raw
-    if data.startswith(marker):
-        return data[len(marker):]
-    return data

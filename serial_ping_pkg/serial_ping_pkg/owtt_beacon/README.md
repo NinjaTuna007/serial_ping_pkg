@@ -37,22 +37,15 @@ beacon, publishing a `sensor_msgs/NavSatFix` for visualisation (e.g. Foxglove).
 
 ## Telemetry frame
 
-The application after the Teensy's timestamp envelope is chosen by
-`beacon.codec` (beacon and surface unit must match):
-
-| `beacon.codec` | Application | Needs |
-|----------------|-------------|-------|
-| `dccl` (default) | `libdccl` `BeaconTelemetry` (id 124) + CRC-8-ATM trailer | `python3-dccl4` |
-| `ascii` | tagged `P<lat>,<lon>;D<m>;C<svs>;S<speed>;B<bt>` | nothing extra |
+The application after the Teensy's timestamp envelope is DCCL
+`BeaconTelemetry` (id 124) plus a CRC-8-ATM trailer (`beacon.codec` is `dccl`).
 
 Schema: [`proto/dccl_acoustic.proto`](../../proto/dccl_acoustic.proto). Why
 `14.2334` as glyphs is not the same as DCCL bits, and how that differs from
 the driver byte pipe:
-[`proto/README.md`](../../proto/README.md). Optional fields match the old tags
-(lat/lon, depth 0–3000 m, svs, speed, bt). DCCL bounds live in that proto;
-ASCII decimals are `ascii_on_air.py` (relay padded `DDD.DD` is still 999.99 m).
-There is **no auto-fallback**: a DCCL receiver drops tagged ASCII, and an ASCII
-receiver drops a DCCL blob.
+[`proto/README.md`](../../proto/README.md). Optional fields are lat/lon, depth
+0–3000 m, svs, speed, and bt. Bounds live in that proto. Relay and TWTT ASCII
+decimals stay in `ascii_on_air.py` (relay padded `DDD.DD` is still 999.99 m).
 
 Decoded fields stay a Python dict. The surface unit does **not** invent a ROS
 `.msg` for them. It publishes JSON `std_msgs/String` for humans/Foxglove; the
@@ -69,18 +62,15 @@ set is `bt` only**.
 
 > Firmware note: `$K` is the host→Teensy command prefix (it would collide with
 > the modem's own `$T`). The Teensy shunts those opaque bytes on air (envelope
-> + application). Type is the DCCL id byte, or ASCII `lat,lon` / tagged `P…`.
-> `#I` is emitted for any timestamped broadcast once UTC is bound; it does not
-> require a `TEL:` marker. RX may still strip leftover `TEL:` from mixed-flash
-> boxes.
+> + application). Type is the DCCL id byte. `#I` is emitted for any
+> timestamped broadcast once UTC is bound.
 
 ## Serial link (succorfish_driver)
 
-The serial-facing nodes (`owtt_beacon_node`, `owtt_surface_unit_node`) **no
-longer open a serial port** themselves. The sibling submodule package
-[`succorfish_driver`](../../../succorfish_driver/README.md) exclusively owns the
-Teensy/modem port and must be running. The nodes talk to it over ROS through the
-`DriverClient` helper, using the driver's **relative** topic/service names (from
+The serial-facing nodes (`owtt_beacon_node`, `owtt_surface_unit_node`) do not
+open a serial port. [`succorfish_driver`](../../../succorfish_driver/README.md)
+owns the Teensy port and must be running. The nodes talk to it over ROS through
+`DriverClient`, using the driver's **relative** topic/service names (from
 `succorfish_msgs/Topics`):
 
 - `succorfish/tx` (`std_msgs/String`) — outbound command, client→driver (the

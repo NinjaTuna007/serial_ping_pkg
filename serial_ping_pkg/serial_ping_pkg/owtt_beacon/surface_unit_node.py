@@ -3,8 +3,7 @@
 A surface unit listens (Teensy in *receiver* mode) for the beacon's telemetry
 broadcasts. For each telemetry frame it:
 
-  1. decodes the telemetry payload with ``beacon.codec`` (default ``dccl``;
-     set ``ascii`` for tagged ``P…`` bags — must match the beacon),
+  1. decodes the DCCL telemetry payload (``beacon.codec`` is ``dccl``),
   2. turns the paired ``#I<delta_us>`` line into a one-way-travel-time range::
 
          range = (delta_us - offset_us) * 1e-6 * sound_velocity
@@ -129,9 +128,7 @@ class SurfaceUnitNode(WireSafeSerialNode):
         self.telemetry_codec = bt_codec.require_codec_runtime(
             self.get_parameter('beacon.codec').get_parameter_value().string_value)
         self.get_logger().info(
-            f"Telemetry codec: {self.telemetry_codec}"
-            + (" (DCCL+CRC-8)" if self.telemetry_codec == bt_codec.CODEC_DCCL
-               else " (tagged ASCII)"))
+            f"Telemetry codec: {self.telemetry_codec} (DCCL+CRC-8)")
         beacon_modem_raw = self.get_parameter('beacon.modem_id').value
         self.beacon_modem_id = ti.normalize_modem_id(beacon_modem_raw) if beacon_modem_raw not in (None, '') else ''
         self.start_keyword = self.get_parameter('beacon.start_keyword').get_parameter_value().string_value
@@ -331,10 +328,7 @@ class SurfaceUnitNode(WireSafeSerialNode):
                     (not self.beacon_modem_id or modem_id == self.beacon_modem_id):
                 self._on_beacon_ack(modem_id)
                 return
-            telem_payload = bt_codec.strip_marker(payload_data, ti.TELEMETRY_MARKER)
-            if telem_payload is None:
-                self.pending = None
-                return
+            telem_payload = payload_data
             if self.beacon_modem_id and modem_id != self.beacon_modem_id:
                 self.get_logger().debug(
                     f"Telemetry from modem {modem_id} != beacon {self.beacon_modem_id}; ignoring.")
@@ -343,10 +337,8 @@ class SurfaceUnitNode(WireSafeSerialNode):
             telemetry = bt_codec.decode_telemetry(
                 telem_payload, codec=self.telemetry_codec)
             if telemetry is None:
-                why = ('ASCII decode failed' if self.telemetry_codec == bt_codec.CODEC_ASCII
-                       else 'CRC-8 / DCCL decode failed')
                 self.get_logger().warn(
-                    f"Dropping telemetry frame ({why}).",
+                    "Dropping telemetry frame (CRC-8 / DCCL decode failed).",
                     throttle_duration_sec=5.0)
                 self.pending = None
                 return

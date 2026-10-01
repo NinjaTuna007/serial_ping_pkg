@@ -1,6 +1,7 @@
 """ASCII on-air decimal catalog (not DCCL).
 
-Used by ``$G``, relay/TWTT ``$B``, and ``beacon.codec:=ascii`` tagged bags.
+Used by ``$G`` and relay/TWTT ``$B``. OWTT positions and beacon telemetry
+are DCCL.
 ROS messages stay full precision (``GeoPoint`` float64, ``Float32``, …).
 
 DCCL bit layout is ``serial_ping_pkg/proto/dccl_acoustic.proto`` (packed by

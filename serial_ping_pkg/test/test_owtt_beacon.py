@@ -2,9 +2,8 @@
 
 Two layers:
 
-* ``beacon_telemetry``: default ``codec='dccl'`` (DCCL+CRC-8); ``codec='ascii'``
-  keeps the tagged ``P…;D…`` form. DCCL tests need ``python3-dccl4`` (user
-  prefix ``~/.local/opt/dccl4`` is fine).
+* ``beacon_telemetry``: DCCL ``BeaconTelemetry`` plus CRC-8. Tests need
+  ``python3-dccl4`` (user prefix ``~/.local/opt/dccl4`` is fine).
 * ``inference_node`` geometry helpers; import-guarded for ROS/MQTT.
 """
 
@@ -14,13 +13,11 @@ import time
 import pytest
 
 from serial_ping_pkg.owtt_beacon.beacon_telemetry import (
-    CODEC_ASCII,
     CODEC_DCCL,
     decode_telemetry,
     encode_telemetry,
     normalize_codec,
     sanitize,
-    strip_marker,
 )
 from serial_ping_pkg.common.dccl_codec import _ensure_dccl, crc8_atm, pack, unpack
 
@@ -62,10 +59,11 @@ def test_encode_decode_round_trip():
 
 
 def test_normalize_codec_default_and_aliases():
-    """Empty/None is DCCL; ascii is kept; anything else is rejected."""
+    """Empty/None is DCCL; anything else is rejected."""
     assert normalize_codec(None) == CODEC_DCCL
     assert normalize_codec('DCCL') == CODEC_DCCL
-    assert normalize_codec('ascii') == CODEC_ASCII
+    with pytest.raises(ValueError):
+        normalize_codec('ascii')
     with pytest.raises(ValueError):
         normalize_codec('both')
 
@@ -93,25 +91,15 @@ def test_encode_only_enabled_fields():
     assert out == {'bt': 'hi'}
 
 
-def test_strip_marker_present_and_absent():
-    """strip_marker strips leftover TEL:; unmarked payload is returned as-is."""
-    assert strip_marker("TEL:P1,2") == "P1,2"
-    assert strip_marker("P1,2") == "P1,2"
-    blob = encode_telemetry(['bt'], bt='hi')
-    assert strip_marker(blob) == blob
-    rest = strip_marker(b'TEL:' + blob)
-    assert rest == blob
-
-
-def test_strip_marker_after_envelope_unwrap():
-    """Surface units decode application bytes after unwrap (no TEL: required)."""
+def test_envelope_unwrap_returns_application():
+    """The timestamp envelope is peeled; the application bytes are unchanged."""
     from serial_ping_pkg.tuper_owtt import teensy_interface as ti
-    app = 'P58.8,17.6'
+    app = 'START'
     payload = f'T04|0001|P|{app}'
     frame = f'#B101{len(payload):02d}{payload}'
     modem_id, data = ti.parse_broadcast_payload(frame)
     assert modem_id == '101'
-    assert strip_marker(data) == 'P58.8,17.6'
+    assert data == app
 
 
 def test_payload_budget_drops_bt_keeps_position():
@@ -124,36 +112,11 @@ def test_payload_budget_drops_bt_keeps_position():
     assert 'bt' not in out
 
 
-def test_ascii_codec_round_trip():
-    """codec='ascii' is the tagged P…;D… form (not DCCL)."""
-    payload = encode_telemetry(
-        ['position', 'depth', 'svs', 'speed', 'bt'],
-        position=(58.823229, 17.635998), depth=12.3, svs=1481.6, speed=1.2,
-        bt='move_to', codec=CODEC_ASCII)
-    assert payload == 'P58.8232290,17.6359980;D12.30;C1481.6;S1.20;Bmove_to'
-    out = decode_telemetry(payload, codec=CODEC_ASCII)
-    assert out['position'][0] == pytest.approx(58.823229)
-    assert out['bt'] == 'move_to'
-
-
 def test_dccl_mode_rejects_ascii():
-    """Default DCCL decode does not silently parse tagged ASCII."""
+    """Tagged ASCII is not a telemetry frame."""
     ascii_bag = 'P58.8232290,17.6359980;D12.30;C1481.6;S1.20;Bmove_to'
     assert decode_telemetry(ascii_bag) is None
     assert decode_telemetry(ascii_bag, codec=CODEC_DCCL) is None
-
-
-def test_ascii_decode_unknown_tag_captured():
-    """Unrecognised ASCII tags land under 'unknown' rather than being dropped."""
-    out = decode_telemetry("Z123", codec=CODEC_ASCII)
-    assert out['unknown'] == {'Z': '123'}
-
-
-def test_ascii_decode_skips_malformed_field():
-    """A malformed ASCII field is skipped without breaking the rest."""
-    out = decode_telemetry("Pbad;D5.0", codec=CODEC_ASCII)
-    assert 'position' not in out
-    assert out['depth'] == pytest.approx(5.0)
 
 
 def test_pose_message_round_trip():
@@ -319,31 +282,4 @@ def test_owtt_surface_unit_publishes_range():
     node_out, _ = st.stop()
     assert got_tel, f"surface unit did not decode DCCL telemetry; out:\n{node_out}"
     assert ok, f"surface unit did not publish a range; out:\n{node_out}"
-    assert ranges[0].data == pytest.approx(150.0, rel=1e-2)
-
-
-@_skip
-@pytest.mark.skipif(exe('owtt_surface_unit_node') is None, reason="node not built")
-def test_owtt_surface_unit_publishes_range_ascii_codec():
-    """codec:=ascii still accepts tagged C1500.0 bags (no TEL: prefix)."""
-    from std_msgs.msg import Float32
-
-    st = Stack(responder=teensy_responder, profile='teensy').start_driver()
-    st.start_probe()
-    ranges = st.probe.collect(Float32, '/surface_unit/owtt_beacon/lolo/range')
-    st.start_node(
-        exe('owtt_surface_unit_node'),
-        ['-p', 'mqtt.enabled:=false',
-         '-p', 'beacon.codec:=ascii',
-         '-p', 'owtt.auto_calibrate:=false',
-         '-p', 'owtt.offset_us:=771600.0'])
-    assert st.fake.wait_for_command('$Y067R', timeout=8), \
-        f"no receiver config; got {st.fake.commands()!r}"
-    time.sleep(0.5)
-    payload = 'C1500.0'
-    st.fake.inject(f'#B101{len(payload):02d}{payload}')
-    st.fake.inject('#I871600')
-    ok = wait_until(lambda: len(ranges) > 0, timeout=8)
-    node_out, _ = st.stop()
-    assert ok, f"ascii-mode surface unit did not publish a range; out:\n{node_out}"
     assert ranges[0].data == pytest.approx(150.0, rel=1e-2)

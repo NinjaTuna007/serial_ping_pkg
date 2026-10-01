@@ -17,6 +17,7 @@ on-wire bytes stay consistent. Lat/lon use ``ascii_on_air.LATLON_DECIMALS``;
 """
 
 from serial_ping_pkg.common.ascii_on_air import format_latlon, format_range
+from succorfish_driver.nm3_frame import build_broadcast
 
 
 def build_position_broadcast(lat, lon, dist):
@@ -27,7 +28,7 @@ def build_position_broadcast(lat, lon, dist):
     CRLF before writing to the modem.
     """
     payload = f'{format_latlon(lat, lon)},{format_range(dist)}'
-    return f'$B{len(payload)}{payload}'
+    return build_broadcast(payload).decode('ascii')
 
 
 def parse_position_distance(line):

@@ -7,13 +7,17 @@ free of ROS and serial I/O so they can be unit-tested directly, mirroring
 
 Two protocols live here:
 
-* The Succorfish ping reply ``...T<travel_time>`` -> range conversion.
-* The leader broadcast frame ``#B00<leader(1)><len(2)><lat,lon,dist>`` parse.
+* The Succorfish ping reply ``#R<id>T<ticks>`` -> range conversion.
+* A leader broadcast: a normal ``#B<id(3)><len(2)>`` frame whose payload is
+  ``lat,lon,dist``. The id is the modem address (``000``–``255``), so a leader
+  at address 111 is ``#B111``.
 
 The travel-time -> range constant is ``0.00003125`` (= 1 / 32000), the modem's
 two-way tick period; multiplied by the sound velocity and the reported tick
 count it yields a distance in metres.
 """
+
+from succorfish_driver.nm3_frame import parse
 
 # Modem tick period (s) baked into the Succorfish travel-time reply.
 TICK_PERIOD_S = 0.00003125
@@ -34,36 +38,35 @@ def ping_response_complete(buf):
 
 
 def parse_ping_distance(buf, sound_velocity):
-    """Range (m) from a complete ping reply buffer.
+    """Range (m) from a ping reply.
 
-    Takes the travel-time after the first ``T`` and converts it. Raises
-    ``IndexError``/``ValueError`` on a malformed buffer, matching the existing
-    node behaviour (callers catch those).
+    A ``#R<id>T<ticks>`` frame uses the ticks from that frame. Any other
+    buffer that still contains ``T<number>`` (the reply the driver matched)
+    uses the number after the first ``T``. Raises ``IndexError`` /
+    ``ValueError`` when there is no numeric travel time.
     """
-    travel_time = float(buf.split("T")[1])
+    msg = parse(buf)
+    if msg is not None and msg.kind == 'range':
+        return travel_time_to_distance(msg.range_ticks, sound_velocity)
+    travel_time = float(str(buf).split("T", 1)[1])
     return travel_time_to_distance(travel_time, sound_velocity)
 
 
 def parse_leader_broadcast(line):
-    """Parse a ``#B00<leader(1)><len(2)><lat,lon,dist>`` leader broadcast.
+    """Parse a leader broadcast ``#B<id(3)><len(2)><lat>,<lon>,<dist>``.
 
-    Returns ``(leader_id, lat, lon, dist)`` (leader_id as a 1-char string,
-    the rest as floats) or ``None`` if the line is not a well-formed leader
-    broadcast (wrong prefix, too short, bad/short length field, or the payload
-    is not exactly three comma-separated floats).
+    ``id`` is the modem address, zero-padded to three digits (``'007'``,
+    ``'111'``). Returns ``(leader_id, lat, lon, dist)`` or ``None`` when the
+    line is not a broadcast, the length field overruns, or the payload is not
+    exactly three comma-separated floats.
     """
-    if not line.startswith('#B00') or len(line) < 7:
+    msg = parse(line)
+    if msg is None or msg.kind != 'broadcast' or msg.source_id is None:
         return None
-    leader_id = line[4]
-    try:
-        msg_len = int(line[5:7])
-    except ValueError:
+    text = msg.payload_text()
+    if text is None:
         return None
-    expected_total_length = 7 + msg_len
-    if len(line) < expected_total_length:
-        return None
-    data = line[7:7 + msg_len]
-    parts = data.split(',')
+    parts = text.split(',')
     if len(parts) != 3:
         return None
     try:
@@ -72,4 +75,4 @@ def parse_leader_broadcast(line):
         dist = float(parts[2])
     except ValueError:
         return None
-    return leader_id, lat, lon, dist
+    return msg.source_id, lat, lon, dist

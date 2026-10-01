@@ -25,7 +25,7 @@ Shared, hardware-free wire-format helpers:
 | File | Role |
 |------|------|
 | `ping_protocol.py` | ping travel-time / leader-broadcast parse |
-| [`ascii_on_air.py`](ascii_on_air.py) | ASCII decimal catalog (`$G`, relay/TWTT `$B`, `codec:=ascii`) |
+| [`ascii_on_air.py`](ascii_on_air.py) | ASCII decimal catalog (`$G`, relay/TWTT `$B`) |
 | [`dccl_codec.py`](dccl_codec.py) | libdccl `pack`/`unpack` + CRC-8-ATM |
 | [`dccl_acoustic_pb2.py`](dccl_acoustic_pb2.py) | generated stubs — do not edit |
 | [`../../proto/dccl_acoustic.proto`](../../proto/dccl_acoustic.proto) | DCCL schema (`beacon.codec:=dccl`) |
@@ -52,7 +52,7 @@ Outbound commands go to the driver on `succorfish/tx` (or via the
 ```
 ping out:   $P<id>                        (e.g. $P001)
 range in:   ...T<ticks>                    range_m = ticks * sound_velocity * 3.125e-5
-leader bcast in: handled by parse_leader_broadcast() -> (leader_id, lat, lon, dist)
+leader bcast in: #B<modem_id(3)><len><lat>,<lon>,<dist>  (id is 000-255, e.g. 111)
 ```
 
 ---
@@ -100,8 +100,9 @@ with an in-flight guard. Bare run:
 ros2 launch serial_ping_pkg serial_broadcast_receiver.launch
 ```
 
-Publishes `/leader<id>/gps` (`sensor_msgs/NavSatFix`) and `/leader<id>/distance`
-(`std_msgs/Float32`) lazily, per leader id seen on the wire. It is a passive
+Publishes `/leader<modem_id>/gps` (`sensor_msgs/NavSatFix`) and
+`/leader<modem_id>/distance` (`std_msgs/Float32`) lazily, per modem address
+seen on the wire (`/leader111/gps` for address 111). It is a passive
 listener: each inbound line arrives via the `succorfish/rx` subscription
 callback (no read timer/buffer of its own). Bare run:
 `ros2 run serial_ping_pkg serial_broadcast_receiver`.

@@ -20,9 +20,8 @@ Wire format (per the Teensy firmware, OWTT_Modem_LoLo_ver1):
     OWTT delta (after a timed modem line): ``#I<delta_us>``
 
 Stick GPS on air is host-packed DCCL ``Pose`` (id 125) sent as ``$K``. The
-Teensy does not encode or prefix ``TEL:``; it shunts those bytes and does
-timing. ``$G`` remains a valid ASCII store command but the OWTT leader does
-not use it. RX may still strip a leftover ``TEL:`` from mixed-flash boxes.
+Teensy shunts those bytes and does timing. ``$G`` remains a valid ASCII store
+command but the OWTT leader does not use it.
 """
 
 from enum import Enum
@@ -93,19 +92,15 @@ def build_gps_command(lat, lon, prefix="$G"):
     return f'{prefix}{format_latlon(lat, lon)}'
 
 
-# Leftover ASCII type tag. Current firmware does not prefix ``TEL:`` on ``$K``.
-# RX still strips it when present so one box can be flashed before the other,
-# and unwrap treats a bare ``TEL:…`` as application (not a ``T<ss>|`` envelope).
-TELEMETRY_MARKER = "TEL:"
-
 # stick-v1 / LOLO_ver3 on-air envelope (before the application payload):
 #   T<ss>|<seq:hex>|<P|H|W>[|<holdover_age_s:hex>]|<application>
 # ss is the TX UTC time-of-minute (seconds, 0-59); broadcasts are PPS-aligned
 # so the sub-second fraction is always ~0 and is omitted. Full unix seconds are
 # redundant because propagation is only a few seconds; the Teensy resolves the
 # minute against its own UTC. holdover is emitted only when non-zero (TX
-# free-running); locked transmitters omit the field. Application (``lat,lon``
-# or opaque DCCL) follows. ROS ranging uses Teensy ``#I`` (absolute OWTT), so
+# free-running); locked transmitters omit the field. Application (DCCL ``Pose``
+# or ``BeaconTelemetry``, or an ASCII control word) follows. ROS ranging uses
+# Teensy ``#I`` (absolute OWTT), so
 # nodes unwrap this and ignore the TX stamp unless a caller asks.
 
 
@@ -130,9 +125,9 @@ def application_as_text(data):
 def unwrap_timestamp_envelope(data):
     """Strip a stick-v1 TX timestamp envelope if present.
 
-    Returns ``(meta, application)``. When ``data`` is not enveloped (legacy
-    bare ``lat,lon``, leftover ``TEL:…``, ``START``, …), ``meta`` is ``None``
-    and ``application`` is ``data`` unchanged.
+    Returns ``(meta, application)``. When ``data`` is not enveloped (a control
+    word, raw DCCL, …), ``meta`` is ``None`` and ``application`` is ``data``
+    unchanged.
 
     ``data`` may be ``str`` or ``bytes``. A binary application slot (DCCL)
     is returned as ``bytes``; ASCII application is returned as ``str``.
@@ -142,7 +137,7 @@ def unwrap_timestamp_envelope(data):
     ``timing_mode``, ``holdover_age_s`` (0 when the field is omitted).
     """
     raw = _as_bytes(data)
-    if not raw or raw[0] != ord('T') or raw.startswith(TELEMETRY_MARKER.encode('ascii')):
+    if not raw or raw[0] != ord('T'):
         if isinstance(data, str):
             return None, data
         text = application_as_text(raw)
@@ -224,13 +219,14 @@ def build_telemetry_command(payload, prefix="$K"):
     so a DCCL blob may contain CR/LF/NUL. The Teensy stores the bytes as-is
     and broadcasts them on the PPS schedule (envelope + application).
 
-    ``payload`` is the application (DCCL id byte, or ASCII ``lat,lon``). Do
-    not prepend ``TEL:``. ``bytes`` return ``bytes`` (caller uses
+    ``payload`` is the application (DCCL bytes, or an ASCII control word).
+    ``bytes`` return ``bytes`` (caller uses
     ``write_bytes``); an all-ASCII ``str`` still returns ``str`` for the old
     newline path, but prefer ``bytes``.
     """
+    from succorfish_driver.nm3_frame import length_prefixed
     raw = _as_bytes(payload)
-    cmd = prefix.encode('ascii') + f'{len(raw):02d}'.encode('ascii') + raw
+    cmd = length_prefixed(prefix, raw)
     if isinstance(payload, str) and application_as_text(raw) is not None:
         return cmd.decode('ascii')
     return cmd
@@ -247,8 +243,9 @@ def build_broadcast_command(data, prefix="$B"):
     ``data`` may be ``str`` or ``bytes``. Returns ``bytes`` when ``data`` is
     binary so the caller can ``write_bytes``; ASCII still returns ``str``.
     """
+    from succorfish_driver.nm3_frame import length_prefixed
     raw = _as_bytes(data)
-    cmd = prefix.encode('ascii') + f'{len(raw):02d}'.encode('ascii') + raw
+    cmd = length_prefixed(prefix, raw)
     if isinstance(data, str) and application_as_text(raw) is not None:
         return cmd.decode('ascii')
     return cmd
@@ -259,41 +256,22 @@ def parse_broadcast_payload(line, prefix="#B"):
 
     Format: ``#B<modem_id(3)><num_chars(2)><data>``. ``data`` may be a stick-v1
     timestamp envelope; this returns the *application* payload after unwrapping
-    (legacy ``lat,lon``, leftover ``TEL:…``, control words, or a binary blob).
+    (DCCL, an ASCII control word, or any other blob).
 
     ``line`` may be ``str`` or ``bytes``. Application is ``str`` when ASCII,
     ``bytes`` when not. Returns ``None`` if the frame is not a parseable broadcast.
     """
-    raw = _as_bytes(line)
-    pfx = prefix.encode('ascii') if isinstance(prefix, str) else prefix
-    if not raw.startswith(pfx):
+    from succorfish_driver.nm3_frame import parse
+    msg = parse(line)
+    if msg is None:
         return None
-    if pfx == b'#B':
-        if len(raw) < 7:
-            return None
-        try:
-            modem_id = raw[2:5].decode('ascii')
-            num_chars = int(raw[5:7])
-        except (ValueError, UnicodeDecodeError):
-            return None
-        data = raw[7:7 + num_chars]
-        if len(data) != num_chars:
-            return None
-        _, application = unwrap_timestamp_envelope(data)
-        return modem_id, application
-    if pfx == b'#U':
-        if len(raw) < 4:
-            return None
-        try:
-            num_chars = int(raw[2:4])
-        except ValueError:
-            return None
-        data = raw[4:4 + num_chars]
-        if len(data) != num_chars:
-            return None
-        _, application = unwrap_timestamp_envelope(data)
-        return '000', application
-    return None
+    want = 'unicast' if prefix in ('#U', b'#U') else 'broadcast'
+    if msg.kind != want:
+        return None
+    _, application = unwrap_timestamp_envelope(msg.payload)
+    if msg.kind == 'broadcast':
+        return msg.source_id, application
+    return '000', application
 
 
 def parse_owtt_delta(line, prefix="#I"):
@@ -326,43 +304,14 @@ def delta_to_range_m(delta_us, offset_us, sound_velocity_mps):
     return (float(delta_us) - float(offset_us)) * 1e-6 * float(sound_velocity_mps)
 
 
-def parse_broadcast(line, prefix="#B"):
-    """Parse a GPS lat/lon Succorfish broadcast relayed by the Teensy.
-
-    Format: ``#B<modem_id(3)><num_chars(2)><data>`` where application ``data``
-    is ``lat,lon`` (optionally inside a stick-v1 timestamp envelope).
-
-    Returns ``(modem_id, lat, lon)`` or ``None`` if the line is not a parseable
-    ASCII GPS broadcast (including leftover ``TEL:`` frames). DCCL Pose is
-    handled by ``parse_broadcast_position``.
-    """
-    parsed = parse_broadcast_payload(line, prefix=prefix)
-    if parsed is None:
-        return None
-    modem_id, data = parsed
-    text = application_as_text(data)
-    if text is None or text.startswith(TELEMETRY_MARKER):
-        return None
-    parts = text.split(',')
-    if len(parts) < 2:
-        return None
-    try:
-        return modem_id, float(parts[0]), float(parts[1])
-    except ValueError:
-        return None
-
-
 _POSE_DECODE_ERROR = None
 
 
 def _pose_from_application(data):
-    """Decode a DCCL ``Pose`` from application bytes (strip leftover ``TEL:``)."""
+    """Decode a DCCL ``Pose`` from application bytes."""
     global _POSE_DECODE_ERROR
     _POSE_DECODE_ERROR = None
     raw = _as_bytes(data)
-    marker = TELEMETRY_MARKER.encode('ascii')
-    if raw.startswith(marker):
-        raw = raw[len(marker):]
     if len(raw) < 2:
         _POSE_DECODE_ERROR = 'short application'
         return None
@@ -381,16 +330,12 @@ def _pose_from_application(data):
 
 
 def parse_broadcast_position(line, prefix="#B"):
-    """Leader position from a relayed ``#B``: ASCII ``lat,lon`` or DCCL Pose.
+    """Leader position from a relayed ``#B``: DCCL ``Pose`` only.
 
-    Stick GPS on air is packed ``Pose`` after the envelope. Legacy ASCII
-    ``lat,lon`` still decodes. Beacon ``BeaconTelemetry`` and leftover
-    ``TEL:`` blobs that are not Pose return ``None`` here (surface unit owns
-    those).
+    Stick GPS on air is packed ``Pose`` after the envelope. ASCII ``lat,lon``
+    is not a position. ``BeaconTelemetry`` returns ``None`` here (the surface
+    unit owns that message).
     """
-    ascii_gps = parse_broadcast(line, prefix=prefix)
-    if ascii_gps is not None:
-        return ascii_gps
     parsed = parse_broadcast_payload(line, prefix=prefix)
     if parsed is None:
         return None

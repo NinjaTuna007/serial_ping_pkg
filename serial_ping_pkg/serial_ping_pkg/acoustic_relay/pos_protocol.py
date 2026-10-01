@@ -22,6 +22,7 @@ from serial_ping_pkg.common.ascii_on_air import (
     format_heading,
     format_latlon,
 )
+from succorfish_driver.nm3_frame import build_broadcast, parse
 
 
 def build_pos_broadcast(lat, lon, depth, heading):
@@ -33,8 +34,7 @@ def build_pos_broadcast(lat, lon, depth, heading):
     data = format_latlon(lat, lon)
     depth_str = ',' + format_depth_padded(depth)
     heading_str = ',' + format_heading(heading)
-    n_chars = len(data) + len(depth_str) + len(heading_str)
-    return f'$B{n_chars}{data}{depth_str}{heading_str}'
+    return build_broadcast(data + depth_str + heading_str).decode('ascii')
 
 
 def parse_pos_broadcast(line):
@@ -47,17 +47,14 @@ def parse_pos_broadcast(line):
     malformed frame (wrong prefix, too short, bad length field, length mismatch,
     fewer than two fields, or non-numeric lat/lon).
     """
-    if not line.startswith('#B') or len(line) < 7:
+    msg = parse(line)
+    if msg is None or msg.kind != 'broadcast' or msg.source_id is None:
         return None
-    modem_id = line[2:5]
-    try:
-        num_chars = int(line[5:7])
-    except ValueError:
+    text = msg.payload_text()
+    if text is None:
         return None
-    data = line[7:7 + num_chars]
-    if len(data) != num_chars:
-        return None
-    parts = data.split(',')
+    modem_id = msg.source_id
+    parts = text.split(',')
     if len(parts) < 2:
         return None
     try:

@@ -2,7 +2,7 @@
 
 Exercises ``serial_ping_pkg.common.ping_protocol`` directly (no ROS, no
 hardware): the Succorfish travel-time -> range conversion, the response
-completeness gate, and the ``#B00`` leader-broadcast parser. Mirrors the style
+completeness gate, and the leader-broadcast parser. Mirrors the style
 of ``test_owtt_protocol.py``.
 """
 
@@ -75,17 +75,23 @@ def test_response_complete_no_marker():
 # --------------------------------------------------------------------------- #
 
 def _leader_frame(leader_id, data):
-    return f"#B00{leader_id}{len(data):02d}{data}"
+    return f"#B{leader_id}{len(data):02d}{data}"
 
 
 def test_parse_leader_broadcast_ok():
-    """A well-formed #B00 frame yields (leader_id, lat, lon, dist)."""
-    frame = _leader_frame('1', '1.0,2.0,3.0')
-    assert parse_leader_broadcast(frame) == ('1', 1.0, 2.0, 3.0)
+    """The leader id is the modem address, including 111."""
+    frame = _leader_frame('111', '1.0,2.0,3.0')
+    assert parse_leader_broadcast(frame) == ('111', 1.0, 2.0, 3.0)
+
+
+def test_parse_leader_broadcast_zero_pads():
+    """Address 7 on the wire as 007 stays the three-digit id."""
+    frame = _leader_frame('007', '1.0,2.0,3.0')
+    assert parse_leader_broadcast(frame)[0] == '007'
 
 
 def test_parse_leader_broadcast_wrong_prefix():
-    """Non-#B00 lines are rejected."""
+    """A line that is not a length-prefixed broadcast is rejected."""
     assert parse_leader_broadcast('#B007foo') is None
     assert parse_leader_broadcast('hello') is None
 
@@ -97,13 +103,13 @@ def test_parse_leader_broadcast_length_mismatch():
 
 def test_parse_leader_broadcast_wrong_field_count():
     """A payload that is not exactly three values is rejected."""
-    frame = _leader_frame('1', '1.0,2.0')
+    frame = _leader_frame('111', '1.0,2.0')
     assert parse_leader_broadcast(frame) is None
 
 
 def test_parse_leader_broadcast_non_numeric():
     """Non-numeric fields are rejected."""
-    frame = _leader_frame('2', 'a,b,c')
+    frame = _leader_frame('111', 'a,b,c')
     assert parse_leader_broadcast(frame) is None
 
 
@@ -111,7 +117,7 @@ def test_parse_leader_broadcast_non_numeric():
 # Full-stack pty integration (Succorfish USB modem profile)                  #
 #                                                                             #
 # fake modem <--pty--> succorfish_driver <--ROS--> common node. Exercises the #
-# real $P -> #R...T... ping exchange and the #B00 leader-broadcast receive    #
+# real $P -> #R...T... ping exchange and the leader-broadcast receive         #
 # path end to end (skipped if the packages are not built/sourced).            #
 # --------------------------------------------------------------------------- #
 
@@ -164,18 +170,18 @@ def test_single_target_ping_node_publishes_distance():
 @_skip
 @pytest.mark.skipif(exe('serial_broadcast_receiver') is None, reason="node not built")
 def test_serial_broadcast_receiver_republishes_leader():
-    """serial_broadcast_receiver: a #B00 leader frame -> /leader<id>/gps + distance."""
+    """serial_broadcast_receiver: #B111 lat,lon,dist -> /leader111/gps + distance."""
     from sensor_msgs.msg import NavSatFix
     from std_msgs.msg import Float32
 
     st = Stack(profile='succorfish').start_driver()
     st.start_probe()
-    gps = st.probe.collect(NavSatFix, '/leader1/gps')
-    dist = st.probe.collect(Float32, '/leader1/distance')
+    gps = st.probe.collect(NavSatFix, '/leader111/gps')
+    dist = st.probe.collect(Float32, '/leader111/distance')
     st.start_node(exe('serial_broadcast_receiver'))
     time.sleep(1.5)  # let the RX subscription match the driver
     data = '59.1,18.8,123.0'                      # lat,lon,dist
-    st.fake.inject(f'#B001{len(data):02d}{data}')  # leader id '1'
+    st.fake.inject(f'#B111{len(data):02d}{data}')
     ok = wait_until(lambda: gps and dist, timeout=8)
     node_out, _ = st.stop()
     assert ok, f"leader fix/range not republished; out:\n{node_out}"

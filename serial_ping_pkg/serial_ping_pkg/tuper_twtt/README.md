@@ -4,6 +4,8 @@ Two ROS 2 nodes that exchange GPS position **and** acoustic range over a
 Succorfish Delphis / NM3 serial modem. Unlike the plain ping nodes, the leader
 sends its *own* GPS fix together with the measured distance, so the follower
 can reconstruct where the leader is and how far away it is ("informed" ranging).
+The fix on air is ASCII `lat,lon,distance`. One-way ranging with a Teensy is
+[`tuper_owtt`](../tuper_owtt/README.md).
 
 - `twtt_leader_node` — measures range to the follower and transmits
   `lat,lon,distance` back over the modem.

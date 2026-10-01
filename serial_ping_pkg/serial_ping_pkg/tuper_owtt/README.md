@@ -1,9 +1,9 @@
 # tuper_owtt
 
-One-way-travel-time (OWTT) acoustic ranging stack. Unlike
-`tuper_twtt` (two-way ping → reply → broadcast), here **leaders
-just broadcast their position** and each receiver derives range from the
-one-way acoustic travel time measured by a **Teensy 4.1** front-end.
+One-way-travel-time (OWTT) acoustic ranging. Leaders broadcast their position
+and each receiver derives range from the one-way acoustic travel time measured
+by a **Teensy 4.1** front-end. [`tuper_twtt`](../tuper_twtt/README.md) is the
+two-way version: ping, reply, then a broadcast, on a modem with no Teensy.
 
 The ROS nodes never talk to the Succorfish modem directly.
 `succorfish_driver` owns the Teensy link (115200 baud / `/dev/ttyACM*`, its
@@ -11,9 +11,6 @@ The ROS nodes never talk to the Succorfish modem directly.
 [Talking to the driver](#talking-to-the-driver)). The Teensy does the precise
 timing (PPS + OCXO disciplined), relays to/from the modem, and is configured
 into one of three modes by a `$Y` command.
-
-> The legacy `tuper_twtt` stack is untouched and still works on the
-> same upgraded hardware; this is the parallel "new system" software.
 
 ---
 
@@ -61,11 +58,10 @@ interface (from `succorfish_msgs/Topics`):
 
 - **Leader:** subscribes to its GPS, applies the `base_link → modem_link` lever
   arm via tf2, packs DCCL `Pose` (id 125) on the host, and feeds `$K<nn><bytes>`
-  to the Teensy. The Teensy stores those bytes as-is and broadcasts `$B…`
-  (timestamp envelope + application) on the PPS schedule. It does not encode
-  or prefix `TEL:`.
-- **Follower:** reads the relayed `#B` (DCCL Pose after the envelope, or
-  legacy ASCII `lat,lon`) and the Teensy's one-way time delta `#I<delta_us>`,
+  to the Teensy. The Teensy stores those bytes and broadcasts `$B…`
+  (timestamp envelope + application) on the PPS schedule.
+- **Follower:** reads the relayed `#B` (DCCL Pose after the envelope) and
+  the Teensy's one-way time delta `#I<delta_us>`,
   converts the delta to a range, and republishes position + range.
 
 Range conversion:
@@ -90,7 +86,7 @@ address to set on this node.
 | host → Teensy | `$G<lat>,<lon>` | ASCII GPS store (firmware still accepts it; the OWTT leader does not send it) |
 | host → Teensy | *(any classic Succorfish cmd)* | passed straight through to the modem |
 | Teensy → modem | `$Bnn<envelope><payload>` | automatic scheduled broadcast of the stored `$K` or `$G` bytes |
-| Teensy → host | `#B<modem(3)><nn(2)><data>` | relayed broadcast frame (envelope + DCCL, or legacy ASCII `lat,lon`) |
+| Teensy → host | `#B<modem(3)><nn(2)><data>` | relayed broadcast (envelope + DCCL, or an ASCII control word) |
 | Teensy → host | `#I<delta_us>` | one-way travel-time delta, sent right after a timed modem line |
 
 Commands are terminated with `\r\n` by default (`teensy.command_terminator`).

@@ -9,7 +9,7 @@ schedule. This node's job on the ROS side is:
      (the modem's geographic position, accounting for the lever arm and the
      vehicle's current orientation via tf2), pack it as DCCL ``Pose``, and
      push it to the Teensy as ``$K<nn><bytes>``. The Teensy shunts those bytes
-     on air (envelope + application, no ``TEL:``) and does timing; it does
+     on air (envelope + application) and does timing; it does
      not encode.
 
 The base/modem tf frames are auto-discovered from the tf tree (the single

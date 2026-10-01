@@ -10,8 +10,8 @@ question: can the UART carry a non-printable payload at all? See
 
 | File | Codec | Who uses it |
 |------|--------|-------------|
-| [`dccl_acoustic.proto`](dccl_acoustic.proto) | DCCL bit layout (`BeaconTelemetry` id 124, `Pose` id 125) | `beacon.codec:=dccl` (default); stick GPS `Pose` via `$K` |
-| [`../serial_ping_pkg/common/ascii_on_air.py`](../serial_ping_pkg/common/ascii_on_air.py) | ASCII decimal strings | `$G` (Teensy ASCII store), relay/TWTT `$B`, `beacon.codec:=ascii` |
+| [`dccl_acoustic.proto`](dccl_acoustic.proto) | DCCL bit layout (`BeaconTelemetry` id 124, `Pose` id 125) | beacon telemetry; stick GPS `Pose` via `$K` |
+| [`../serial_ping_pkg/common/ascii_on_air.py`](../serial_ping_pkg/common/ascii_on_air.py) | ASCII decimal strings | `$G` (Teensy ASCII store), relay/TWTT `$B` |
 | [`../serial_ping_pkg/common/dccl_codec.py`](../serial_ping_pkg/common/dccl_codec.py) | `pack` / `unpack` + CRC-8-ATM | only place nodes touch libdccl |
 | [`../serial_ping_pkg/common/dccl_acoustic_pb2.py`](../serial_ping_pkg/common/dccl_acoustic_pb2.py) | generated stubs | **do not edit**; regenerate from this proto |
 
@@ -33,7 +33,7 @@ tags. At the catalog's 7 decimal places the same latitude prints as
 scales with how many digits you print, not with the physical range of the
 quantity.
 
-**DCCL** (`beacon.codec:=dccl`) does not send those characters. It scales the
+**DCCL** does not send those characters. It scales the
 value into an integer given `min` / `max` / `precision` in this proto and packs
 that integer into bits. Latitude at 7 decimal places (`min: -90`, `max: 90`) is
 31 bits (~4 bytes), not ten ASCII digits. Longitude at the same grain is 32
@@ -44,7 +44,3 @@ Same 64-byte modem cap. ASCII burns it on digits and punctuation; DCCL spends
 it on more fields and the CRC. A DCCL blob is not UTF-8 text, so it goes out
 on `succorfish/tx_bytes` (and back on `rx_bytes`). Printable ASCII payloads
 still appear on `succorfish/rx` as well.
-
-There is **no auto-fallback**: a DCCL receiver drops tagged ASCII, and an ASCII
-receiver drops a DCCL blob. Beacon and surface unit must set the same
-`beacon.codec`.

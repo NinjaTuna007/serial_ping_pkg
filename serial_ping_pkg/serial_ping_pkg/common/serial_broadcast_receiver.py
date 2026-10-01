@@ -1,16 +1,18 @@
 """General-purpose leader-broadcast receiver node.
 
-Reads leader broadcast frames off the modem, decodes ``leader_id,lat,lon,dist``
-via ``common.ping_protocol.parse_leader_broadcast``, and republishes each
-leader's GPS fix and range into the ROS graph. Publishers are created lazily,
-one pair per leader id seen on the wire.
+Reads leader broadcast frames off the modem, decodes
+``#B<modem_id(3)><len><lat>,<lon>,<dist>`` via
+``common.ping_protocol.parse_leader_broadcast``, and republishes each
+leader's GPS fix and range into the ROS graph. The id is the modem address
+(``000``–``255``), so address 111 publishes on ``/leader111/...``. Publishers
+are created lazily, one pair per address seen on the wire.
 
 The modem link is owned by the ``succorfish_driver`` node; this node never opens
 a serial port. Inbound lines arrive via the driver's ``RX`` topic.
 
 Published topics (per leader id seen):
-- ``/leader<id>/gps`` (``sensor_msgs/NavSatFix``) -- reconstructed leader position.
-- ``/leader<id>/distance`` (``std_msgs/Float32``) -- range to that leader (m).
+- ``/leader<modem_id>/gps`` (``sensor_msgs/NavSatFix``) -- reconstructed leader position.
+- ``/leader<modem_id>/distance`` (``std_msgs/Float32``) -- range to that leader (m).
 
 Subscribed topics:
 - the driver's ``RX`` topic (``succorfish_msgs/SerialLine``) -- inbound modem lines.

@@ -9,6 +9,16 @@ Each scenario has its own code, config, launch files, and README, sharing one
 
 ---
 
+## One-way travel time (Teensy)
+
+A leader broadcasts its position. Each receiver gets the range from the
+one-way acoustic travel time, timed by a Teensy 4.1 (PPS + OCXO). The position
+on air is a packed DCCL `Pose`. Start here:
+[`tuper_owtt`](serial_ping_pkg/tuper_owtt/README.md). Beacon telemetry on the
+same front-end is [`owtt_beacon`](serial_ping_pkg/owtt_beacon/README.md).
+
+---
+
 ## USB Delphis (no Teensy)
 
 If you have a Succorfish Delphis / NM3 on USB and just want to ping another
@@ -36,9 +46,8 @@ modem). Same launch, no Teensy, no PPS.
 
 To relay GPS over the acoustic link, use
 [`acoustic_relay`](serial_ping_pkg/acoustic_relay/README.md). For two-way
-informed ranging, [`tuper_twtt`](serial_ping_pkg/tuper_twtt/README.md).
-One-way travel time with a Teensy front-end is a separate stack:
-[`tuper_owtt`](serial_ping_pkg/tuper_owtt/README.md).
+informed ranging without a Teensy, use
+[`tuper_twtt`](serial_ping_pkg/tuper_twtt/README.md).
 
 ---
 
@@ -49,9 +58,9 @@ One-way travel time with a Teensy front-end is a separate stack:
 | `common` | General-purpose nodes: two-leader alternating ping, single-target ping, generic broadcast receiver. | [serial_ping_pkg/common/README.md](serial_ping_pkg/common/README.md) |
 | `acoustic_relay` | Relay a robot's position over the modem: one node broadcasts, others receive and republish per robot. | [serial_ping_pkg/acoustic_relay/README.md](serial_ping_pkg/acoustic_relay/README.md) |
 | `ping_estimator_action` | Range-only localization of remote modems via an action server (two-way ranging + LS/EKF). | [serial_ping_pkg/ping_estimator_action/README.md](serial_ping_pkg/ping_estimator_action/README.md) |
-| `tuper_twtt` | Two-way-travel-time "informed" leader/follower over the Succorfish modem. | [serial_ping_pkg/tuper_twtt/README.md](serial_ping_pkg/tuper_twtt/README.md) |
-| `tuper_owtt` | One-way-travel-time leader/follower using a PPS/OCXO-disciplined Teensy front-end. | [serial_ping_pkg/tuper_owtt/README.md](serial_ping_pkg/tuper_owtt/README.md) |
-| `owtt_beacon` | OWTT beacon telemetry + surface-unit reception + MQTT-fed triangulation/inference. | [serial_ping_pkg/owtt_beacon/README.md](serial_ping_pkg/owtt_beacon/README.md) |
+| `tuper_owtt` | One-way travel time with a PPS/OCXO-disciplined Teensy front-end. Position on air is DCCL `Pose`. | [serial_ping_pkg/tuper_owtt/README.md](serial_ping_pkg/tuper_owtt/README.md) |
+| `owtt_beacon` | OWTT beacon telemetry (DCCL) + surface-unit reception + MQTT-fed triangulation. | [serial_ping_pkg/owtt_beacon/README.md](serial_ping_pkg/owtt_beacon/README.md) |
+| `tuper_twtt` | Two-way "informed" leader/follower: the modem carries `lat,lon,distance` as ASCII. | [serial_ping_pkg/tuper_twtt/README.md](serial_ping_pkg/tuper_twtt/README.md) |
 
 Shared config loading lives in `serial_ping_pkg/utils.py`. Nodes talk to the
 modem through `succorfish_driver` via `serial_ping_pkg/common/driver_client.py`
@@ -156,7 +165,8 @@ sudo apt install python3-dccl4 libdccl4
 ```
 
 `rosdep -r` will warn that it cannot resolve `python3-dccl4` / `libdccl4`; that
-is expected. `beacon.codec:=ascii` (tagged `P…`) does not need libdccl.
+is expected. Install it when you run OWTT (stick GPS and beacon telemetry).
+Ping, relay, and TWTT are ASCII and run without it.
 
 If apt is not an option, extract the GobySoft debs to `~/.local/opt/dccl4` (or
 set `DCCL4_PREFIX`) so `dccl_codec` can find `libdccl.so` and the Python

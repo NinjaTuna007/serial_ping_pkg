@@ -6,10 +6,9 @@ acoustic link. It talks to a Teensy 4.1 in *transmitter* mode (not the
 Succorfish directly).
 
 It subscribes to a configurable subset of telemetry sources and packs them
-with ``beacon.codec`` (default ``dccl``: ``BeaconTelemetry`` id 124 plus
-CRC-8; ``ascii``: tagged ``P<lat>,<lon>;D…``), then pushes ``$K<nn><payload>``
-to the Teensy. The Teensy stores those bytes as-is and broadcasts on its
-PPS/OCXO schedule. Beacon and surface unit must use the same codec.
+with ``beacon.codec`` (``dccl``: ``BeaconTelemetry`` id 124 plus CRC-8),
+then pushes ``$K<nn><payload>`` to the Teensy. The Teensy stores those bytes
+as-is and broadcasts on its PPS/OCXO schedule.
 
 Telemetry sources (all under the beacon's namespace, smarc2 conventions):
     position  /<name>/smarc/latlon          geographic_msgs/GeoPoint
@@ -137,7 +136,7 @@ class BeaconNode(WireSafeSerialNode):
         self.max_bt_len = self.get_parameter('beacon.max_bt_len').get_parameter_value().integer_value
         self.max_onair_bytes = self.get_parameter('beacon.max_onair_bytes').get_parameter_value().integer_value
         # Budget for the encoded payload = modem on-air limit (envelope is
-        # added by the Teensy; application is $K bytes with no TEL: prefix).
+        # added by the Teensy; application is the $K bytes).
         self._max_payload_len = max(0, self.max_onair_bytes)
         self.send_period_s = self.get_parameter('beacon.send_period_s').get_parameter_value().double_value
         self.position_seed_count = self.get_parameter('beacon.position_seed_count').get_parameter_value().integer_value
@@ -152,9 +151,7 @@ class BeaconNode(WireSafeSerialNode):
         if not self.telemetry_fields:
             self.telemetry_fields = ['bt']
         self.get_logger().info(
-            f"Telemetry codec: {self.telemetry_codec}"
-            + (" (DCCL+CRC-8)" if self.telemetry_codec == bt_codec.CODEC_DCCL
-               else " (tagged ASCII)"))
+            f"Telemetry codec: {self.telemetry_codec} (DCCL+CRC-8)")
 
         # Telemetry is gated by START/STOP commands (unless autostart is set).
         self.broadcasting = self.autostart

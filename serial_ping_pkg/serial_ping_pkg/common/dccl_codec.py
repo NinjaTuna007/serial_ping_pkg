@@ -4,7 +4,7 @@ Schema lives in ``serial_ping_pkg/proto/dccl_acoustic.proto``. This module is th
 only place nodes should touch ``libdccl``. Transmit/receive logic fills a dict
 (or protobuf), calls ``pack`` / ``unpack``, and writes the bytes.
 
-Wire layout (after the Teensy timestamp envelope; no ``TEL:`` tag)::
+Wire layout (after the Teensy timestamp envelope)::
 
     <dccl bytes, first byte is the message id> <crc8>
 
