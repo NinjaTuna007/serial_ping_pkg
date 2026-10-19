@@ -48,13 +48,8 @@ owtt:
 # Follower / receiver settings. (The follower runs on 'lolo'; the leaders do not.)
 follower:
   leader_gps_msg_type: "GeoPoint"     # GeoPoint | NavSatFix
-  # Two leaders, routed by acoustic modem id -> leader name. Names and modem ids
-  # are overridable from launch arguments. Output topics become
-  # owtt/<name>/smarc/latlon and owtt/<name>/distance under the node namespace.
-  leader1_name: "leader1"
-  leader1_modem_id: "067"
-  leader2_name: "leader2"
-  leader2_modem_id: "069"
+  # Leaders are not configured. The first broadcast from a modem opens
+  # owtt/m<modem_id>/smarc/latlon and owtt/m<modem_id>/distance.
 
 # Leader / transmitter settings. Leaders are vehicle-specific and never 'lolo'.
 leader:

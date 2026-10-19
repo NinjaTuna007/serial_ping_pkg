@@ -8,8 +8,9 @@ robot_name selects the sound-velocity mapping: 'lolo' keeps the legacy
 svs_interfaces/msg/SVS feed (/lolo/sensors/svs); any other name uses the stick
 convention (std_msgs/msg/Float64 on /<robot_name>/smarc/sound_velocity).
 Explicit sound_velocity_* arguments always win. Outputs are relative under
-``owtt/<leader>/...`` so they land in this launch's namespace, e.g.
-``/stick_3/owtt/stick_1/distance``.
+``owtt/m<modem_id>/...`` so they land in this launch's namespace, e.g.
+``/lolo/owtt/m067/distance``. The modem id is taken from the broadcast; it is
+not a launch argument.
 """
 import launch
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -95,15 +96,8 @@ def generate_launch_description():
         DeclareLaunchArgument('leader_gps_msg_type', default_value='GeoPoint',
                               description='GeoPoint | NavSatFix'),
 
-        # Leader name <-> modem id mapping (two leaders)
-        DeclareLaunchArgument('leader1_name', default_value='leader1',
-                              description='Name for the first leader'),
-        DeclareLaunchArgument('leader1_modem_id', default_value='007',
-                              description='Modem id of the first leader'),
-        DeclareLaunchArgument('leader2_name', default_value='leader2',
-                              description='Name for the second leader'),
-        DeclareLaunchArgument('leader2_modem_id', default_value='111',
-                              description='Modem id of the second leader'),
+        # Leaders are not listed here. The node opens owtt/m<modem_id>/...
+        # the first time a broadcast from that modem arrives.
         DeclareLaunchArgument(
             'own_modem_id', default_value='101',
             description="This receiver's own modem address (for the $Y config command)"),
@@ -149,14 +143,6 @@ def generate_launch_description():
                     LaunchConfiguration('sound_velocity_field'), value_type=str),
                 'follower.leader_gps_msg_type': ParameterValue(
                     LaunchConfiguration('leader_gps_msg_type'), value_type=str),
-                'follower.leader1_name': ParameterValue(
-                    LaunchConfiguration('leader1_name'), value_type=str),
-                'follower.leader1_modem_id': ParameterValue(
-                    LaunchConfiguration('leader1_modem_id'), value_type=str),
-                'follower.leader2_name': ParameterValue(
-                    LaunchConfiguration('leader2_name'), value_type=str),
-                'follower.leader2_modem_id': ParameterValue(
-                    LaunchConfiguration('leader2_modem_id'), value_type=str),
                 'teensy.own_modem_id': ParameterValue(
                     LaunchConfiguration('own_modem_id'), value_type=str),
                 'teensy.mode': ParameterValue(

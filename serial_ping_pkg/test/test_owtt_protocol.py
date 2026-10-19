@@ -268,10 +268,10 @@ def test_owtt_follower_publishes_position_and_range():
 
     st = Stack(responder=teensy_responder, profile='teensy').start_driver()
     st.start_probe()
-    positions = st.probe.collect(GeoPoint, '/owtt/leader1/smarc/latlon')
-    ranges = st.probe.collect(Float32, '/owtt/leader1/distance')
+    positions = st.probe.collect(GeoPoint, '/owtt/m007/smarc/latlon')
+    ranges = st.probe.collect(Float32, '/owtt/m007/distance')
     st.start_node(exe('owtt_follower_node'),
-                  ['-p', 'follower.leader1_modem_id:=7', '-p', 'owtt.offset_us:=0.0'])
+                  ['-p', 'owtt.offset_us:=0.0'])
     assert st.fake.wait_for_command(lambda c: c.endswith('R'), timeout=6.0)
     time.sleep(0.5)
     data = pack_pose(59.1, 18.8)
@@ -286,6 +286,45 @@ def test_owtt_follower_publishes_position_and_range():
 
 
 @_skip_owtt
+def test_owtt_follower_opens_a_topic_per_modem():
+    """A second modem id opens its own latlon and distance topics."""
+    from geographic_msgs.msg import GeoPoint
+    from std_msgs.msg import Float32
+    from serial_ping_pkg.common.dccl_codec import pack_pose
+
+    st = Stack(responder=teensy_responder, profile='teensy').start_driver()
+    st.start_probe()
+    pos_a = st.probe.collect(GeoPoint, '/owtt/m007/smarc/latlon')
+    rng_a = st.probe.collect(Float32, '/owtt/m007/distance')
+    pos_b = st.probe.collect(GeoPoint, '/owtt/m067/smarc/latlon')
+    rng_b = st.probe.collect(Float32, '/owtt/m067/distance')
+    st.start_node(exe('owtt_follower_node'),
+                  ['-p', 'owtt.offset_us:=0.0'])
+    assert st.fake.wait_for_command(lambda c: c.endswith('R'), timeout=6.0)
+    time.sleep(0.5)
+
+    # #I pairs with the broadcast the node has already handled, so each frame
+    # has to land before its range line.
+    data_a = pack_pose(59.1, 18.8)
+    st.fake.inject(b'#B007' + f'{len(data_a):02d}'.encode('ascii') + data_a)
+    assert wait_until(lambda: pos_a, timeout=8.0)
+    st.fake.inject('#I150000')
+    assert wait_until(lambda: rng_a, timeout=8.0)
+    data_b = pack_pose(59.2, 18.1)
+    st.fake.inject(b'#B067' + f'{len(data_b):02d}'.encode('ascii') + data_b)
+    assert wait_until(lambda: pos_b, timeout=8.0)
+    st.fake.inject('#I100000')  # 100000 us * 1e-6 * 1500 = 150 m
+    ok = wait_until(lambda: rng_b, timeout=8.0)
+    node_out, _ = st.stop()
+    assert ok, f"second modem did not get its own topics; out:\n{node_out}"
+    assert pos_a[0].latitude == pytest.approx(59.1, abs=5e-8)
+    assert rng_a[0].data == pytest.approx(225.0, rel=1e-3)
+    assert pos_b[0].latitude == pytest.approx(59.2, abs=5e-8)
+    assert pos_b[0].longitude == pytest.approx(18.1, abs=5e-8)
+    assert rng_b[0].data == pytest.approx(150.0, rel=1e-3)
+
+
+@_skip_owtt
 def test_owtt_follower_publishes_dccl_pose_and_range():
     """Same #B/#I path with host-packed DCCL Pose after the envelope."""
     from geographic_msgs.msg import GeoPoint
@@ -294,10 +333,10 @@ def test_owtt_follower_publishes_dccl_pose_and_range():
 
     st = Stack(responder=teensy_responder, profile='teensy').start_driver()
     st.start_probe()
-    positions = st.probe.collect(GeoPoint, '/owtt/leader1/smarc/latlon')
-    ranges = st.probe.collect(Float32, '/owtt/leader1/distance')
+    positions = st.probe.collect(GeoPoint, '/owtt/m007/smarc/latlon')
+    ranges = st.probe.collect(Float32, '/owtt/m007/distance')
     st.start_node(exe('owtt_follower_node'),
-                  ['-p', 'follower.leader1_modem_id:=7', '-p', 'owtt.offset_us:=0.0'])
+                  ['-p', 'owtt.offset_us:=0.0'])
     assert st.fake.wait_for_command(lambda c: c.endswith('R'), timeout=6.0)
     time.sleep(0.5)
     payload = b'T04|003A|P|' + pack_pose(59.1, 18.8)

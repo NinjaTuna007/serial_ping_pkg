@@ -27,14 +27,15 @@ matches the acoustic path rather than antenna-to-modem.
 
 ``sound_velocity`` defaults to 1500 m/s but is sourced live from a configurable
 topic/msg type (default ``/lolo/sensors/svs`` of type ``svs_interfaces/msg/SVS``,
-field ``svs``) when available. It then publishes leader position + range under
-this node's namespace (so two followers on one computer do not collide)::
+field ``svs``) when available. The first broadcast from a modem opens publishers
+under this node's namespace (so two followers on one computer do not collide)::
 
-    owtt/<leader>/smarc/latlon
-    owtt/<leader>/distance
+    owtt/m<modem_id>/smarc/latlon
+    owtt/m<modem_id>/distance
 
-e.g. with ``namespace:=stick_3`` and leader ``stick_1`` that becomes
-``/stick_3/owtt/stick_1/distance``.
+e.g. modem ``067`` in namespace ``lolo`` becomes ``/lolo/owtt/m067/distance``.
+The ``m`` keeps the token from starting with a digit, which ROS rejects.
+A modem that has not been heard yet has no topics.
 """
 
 import math
@@ -97,11 +98,6 @@ class OwttFollowerNode(WireSafeSerialNode):
 
         # --- Follower parameters ---
         self.declare_parameter('follower.leader_gps_msg_type', follower_cfg.get('leader_gps_msg_type', 'GeoPoint'))
-        # Two leaders, routed by acoustic modem id. Names + ids overridable via launch.
-        self.declare_parameter('follower.leader1_name', follower_cfg.get('leader1_name', 'leader1'))
-        self.declare_parameter('follower.leader1_modem_id', follower_cfg.get('leader1_modem_id', '007'), id_desc)
-        self.declare_parameter('follower.leader2_name', follower_cfg.get('leader2_name', 'leader2'))
-        self.declare_parameter('follower.leader2_modem_id', follower_cfg.get('leader2_modem_id', '111'), id_desc)
         # Own GPS for auto-cal (relative -> /<namespace>/smarc/latlon).
         self.declare_parameter(
             'follower.latlon_topic',
@@ -141,10 +137,6 @@ class OwttFollowerNode(WireSafeSerialNode):
         self.sound_velocity_msg_type = self.get_parameter('owtt.sound_velocity_msg_type').get_parameter_value().string_value
         self.sound_velocity_field = self.get_parameter('owtt.sound_velocity_field').get_parameter_value().string_value
         self.leader_gps_msg_type = self.get_parameter('follower.leader_gps_msg_type').get_parameter_value().string_value
-        self.leader1_name = self.get_parameter('follower.leader1_name').get_parameter_value().string_value
-        self.leader1_modem_id = ti.normalize_modem_id(self.get_parameter('follower.leader1_modem_id').value)
-        self.leader2_name = self.get_parameter('follower.leader2_name').get_parameter_value().string_value
-        self.leader2_modem_id = ti.normalize_modem_id(self.get_parameter('follower.leader2_modem_id').value)
         self.latlon_topic = self.get_parameter('follower.latlon_topic').get_parameter_value().string_value
         self.base_frame = self.get_parameter('follower.base_frame').get_parameter_value().string_value
         self.modem_frame = self.get_parameter('follower.modem_frame').get_parameter_value().string_value
@@ -195,31 +187,9 @@ class OwttFollowerNode(WireSafeSerialNode):
         # Resolve leader GPS message type.
         self.LeaderMsgType = self._resolve_gps_type(self.leader_gps_msg_type)
 
-        # Build modem_id -> {name, pos_pub, dist_pub} routing for the two leaders.
+        # modem_id -> publishers. Filled on the first broadcast from that modem.
+        # Topics are owtt/m<modem_id>/... under this node's namespace.
         self.robots = {}
-        for name, modem_id in ((self.leader1_name, self.leader1_modem_id),
-                               (self.leader2_name, self.leader2_modem_id)):
-            if not name or not modem_id:
-                continue
-            modem_id = str(modem_id).zfill(3)
-            # Relative topics inherit the launch namespace (robot_name), so
-            # stick_3 and stick_4 on one host each own their OWTT outputs.
-            pos_topic = f"owtt/{name}/smarc/latlon"
-            dist_topic = f"owtt/{name}/distance"
-            self.robots[modem_id] = {
-                'name': name,
-                'pos_pub': self.create_publisher(self.LeaderMsgType, pos_topic, 10),
-                'dist_pub': self.create_publisher(Float32, dist_topic, 10),
-                # Frozen-position detection state.
-                'last_pos': None,
-                'identical_count': 0,
-                'stale': False,
-                'stale_warned': False,
-            }
-            self.get_logger().info(
-                f"Leader {name}: modem {modem_id} -> "
-                f"{self.get_namespace().rstrip('/')}/{pos_topic}, "
-                f"{self.get_namespace().rstrip('/')}/{dist_topic}")
 
         # Pairing state: the delta line refers to the most recent broadcast.
         self.pending_modem_id = None
@@ -234,7 +204,8 @@ class OwttFollowerNode(WireSafeSerialNode):
             if self.auto_calibrate else "auto-cal OFF (fixed offset_us)"
         )
         self.get_logger().info(
-            f"OWTT follower initialised (receiver mode); {cal_msg}, "
+            f"OWTT follower initialised (receiver mode); leaders are opened "
+            f"as owtt/m<modem_id>/ when heard; {cal_msg}, "
             f"configured offset_us={self._configured_offset_us:.0f}.")
 
     # ------------------------------------------------------------------ helpers
@@ -533,11 +504,34 @@ class OwttFollowerNode(WireSafeSerialNode):
         # Anything else (e.g. classic Succorfish responses) is just logged.
         self.get_logger().debug(f"<- Teensy (unhandled): {line}")
 
-    def publish_position(self, modem_id, lat, lon):
+    def _ensure_leader(self, modem_id):
+        """Create position and range publishers the first time this modem is heard."""
+        modem_id = ti.normalize_modem_id(modem_id)
         robot = self.robots.get(modem_id)
-        if robot is None:
-            self.get_logger().warn(f"Broadcast from unknown modem_id {modem_id}, ignoring.")
-            return
+        if robot is not None:
+            return robot
+        # Relative topics inherit the launch namespace, so two followers on
+        # one computer do not share a graph.
+        # 'm' prefix: a ROS topic token cannot start with a digit.
+        pos_topic = f"owtt/m{modem_id}/smarc/latlon"
+        dist_topic = f"owtt/m{modem_id}/distance"
+        robot = {
+            'name': modem_id,
+            'pos_pub': self.create_publisher(self.LeaderMsgType, pos_topic, 10),
+            'dist_pub': self.create_publisher(Float32, dist_topic, 10),
+            'last_pos': None,
+            'identical_count': 0,
+            'stale': False,
+            'stale_warned': False,
+        }
+        self.robots[modem_id] = robot
+        ns = self.get_namespace().rstrip('/')
+        self.get_logger().info(
+            f"Leader {modem_id} heard -> {ns}/{pos_topic}, {ns}/{dist_topic}")
+        return robot
+
+    def publish_position(self, modem_id, lat, lon):
+        robot = self._ensure_leader(modem_id)
 
         # Frozen-position guard: count byte-for-byte repeats of this leader's GPS.
         pos = (lat, lon)
@@ -577,11 +571,7 @@ class OwttFollowerNode(WireSafeSerialNode):
             self.get_logger().warn("Got OWTT delta with no preceding broadcast, ignoring.")
             return
         modem_id = self.pending_modem_id
-        robot = self.robots.get(modem_id)
-        if robot is None:
-            self.get_logger().warn(
-                f"OWTT delta for unknown modem_id {modem_id}, ignoring.")
-            return
+        robot = self._ensure_leader(modem_id)
         if robot['stale']:
             self.get_logger().debug(
                 f"[{robot['name']}] range suppressed: leader position is frozen/stale.")

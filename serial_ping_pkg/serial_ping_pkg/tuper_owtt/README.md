@@ -197,14 +197,8 @@ a launch argument.
 | `owtt.sound_velocity_msg_type` | `svs_interfaces/msg/SVS` | sound-velocity msg type |
 | `owtt.sound_velocity_field` | `svs` | field on the msg holding m/s |
 | `follower.leader_gps_msg_type` | `GeoPoint` | `GeoPoint` or `NavSatFix` |
-| `follower.leader1_name` | `leader1` | name of the first leader (output topics `/leader1/...`) |
-| `follower.leader1_modem_id` | `007` | acoustic modem id of the first leader |
-| `follower.leader2_name` | `leader2` | name of the second leader (output topics `/leader2/...`) |
-| `follower.leader2_modem_id` | `111` | acoustic modem id of the second leader |
 
-> The follower runs on `lolo`; the leaders are **not** named `lolo`. The
-> modem-id → leader-name mapping is two `leaderN_name` / `leaderN_modem_id`
-> pairs, all overridable from launch arguments.
+The follower does not take a leader list. The first broadcast from a modem opens `owtt/m<modem_id>/smarc/latlon` and `owtt/m<modem_id>/distance` (for example `/lolo/owtt/m067/...`). A later modem does the same. The id is the three-digit address on the `#B` frame. The `m` is there because a ROS topic name cannot start with a digit.
 
 ---
 
@@ -332,10 +326,6 @@ ros2 launch serial_ping_pkg owtt_follower_node.launch.py \
     sound_velocity_msg_type:=svs_interfaces/msg/SVS \
     sound_velocity_field:=svs \
     leader_gps_msg_type:=GeoPoint \
-    leader1_name:=leader1 \
-    leader1_modem_id:=007 \
-    leader2_name:=leader2 \
-    leader2_modem_id:=111 \
     own_modem_id:=101 \
     mode:=receiver \
     command_terminator:=$'\r\n'
@@ -353,10 +343,6 @@ ros2 launch serial_ping_pkg owtt_follower_node.launch.py \
 | `sound_velocity_msg_type` | `svs_interfaces/msg/SVS` | SVS message type |
 | `sound_velocity_field` | `svs` | field on the SVS msg holding m/s |
 | `leader_gps_msg_type` | `GeoPoint` | `GeoPoint` or `NavSatFix` for published leader position |
-| `leader1_name` | `leader1` | first leader's name → topics `/leader1/...` |
-| `leader1_modem_id` | `007` | first leader's modem id (string; quote if leading zeros) |
-| `leader2_name` | `leader2` | second leader's name → topics `/leader2/...` |
-| `leader2_modem_id` | `111` | second leader's modem id |
 | `own_modem_id` | `101` | this receiver's modem address → `$Y101R` |
 | `mode` | `receiver` | `receiver` or `wire` (passive passthrough) |
 | `command_terminator` | `\r\n` | appended to every Teensy command; rarely changed |
@@ -385,11 +371,9 @@ ros2 launch serial_ping_pkg owtt_leader_node.launch \
 ros2 launch serial_ping_pkg owtt_leader_node.launch \
     robot_name:=sam own_modem_id:=011 listen_for_modem_id:=007
 
-# Follower with a calibrated OWTT offset and a custom leader-id map
+# Follower. Each heard modem publishes owtt/m<modem_id>/smarc/latlon and distance.
 ros2 launch serial_ping_pkg owtt_follower_node.launch.py \
-    owtt_offset_us:=12345.0 \
-    leader1_name:=sam leader1_modem_id:=011 \
-    leader2_name:=leader1 leader2_modem_id:=007
+    owtt_offset_us:=12345.0
 
 # Follower without a live SVS feed (force the 1500 m/s default)
 ros2 launch serial_ping_pkg owtt_follower_node.launch.py sound_velocity_topic:=''
