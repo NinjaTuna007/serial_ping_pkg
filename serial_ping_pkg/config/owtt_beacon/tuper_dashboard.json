@@ -1,0 +1,279 @@
+{
+  "configById": {
+    "map!2ri7c54": {
+      "zoomLevel": 19,
+      "center": {
+        "lat": 0,
+        "lon": 0
+      },
+      "customTileUrl": "",
+      "disabledTopics": [
+        "/origin_gps",
+        "/f1/ekf/geopoint_centroid",
+        "/floatsam_usv_1/ublox_gps_node/fix",
+        "/floatsam_usv_0/core/gps_right",
+        "/floatsam_usv_0/core/gps_left",
+        "/floatsam_usv_0/core/rtk_position",
+        "/floatsam_usv_1/core/gps_left",
+        "/floatsam_usv_1/core/gps_right",
+        "/floatsam_usv_1/core/rtk_position",
+        "/floatsam_usv_0/ublox_gps_node/fix",
+        "/owtt_beacon/lolo/estimate_alt"
+      ],
+      "followTopic": "/owtt_beacon/lolo/estimate",
+      "followFrame": "",
+      "layer": "satellite",
+      "topicColors": {
+        "/origin_gps": "#799ad9",
+        "/owtt_beacon/lolo/receiver/buoy_1": "#f7df71",
+        "/owtt_beacon/lolo/receiver/buoy_2": "#f7df71",
+        "/owtt_beacon/lolo/reported": "#85f772",
+        "/owtt_beacon/lolo/estimate": "#4da3ff",
+        "/owtt_beacon/lolo/receiver/stick_2": "#f7df71",
+        "/owtt_beacon/lolo/receiver/stick_3": "#f7a14a"
+      },
+      "maxNativeZoom": 18,
+      "topicConfig": {
+        "/origin_gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/owtt_beacon/lolo/receiver/buoy_1": {
+          "historyMode": "none",
+          "pointSize": 15,
+          "pointDisplayMode": "pin"
+        },
+        "/owtt_beacon/lolo/receiver/buoy_2": {
+          "historyMode": "none",
+          "pointSize": 15,
+          "pointDisplayMode": "pin"
+        },
+        "/owtt_beacon/lolo/reported": {
+          "historyMode": "previous",
+          "pointSize": 15,
+          "pointDisplayMode": "cross",
+          "timeWindowSeconds": 30
+        },
+        "/f1/core/gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f1/leader1/core/gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f1/origin_gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f2/core/gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f3/core/gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f4/core/gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f5/core/gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/leader1/core/gps": {
+          "historyMode": "all",
+          "pointSize": 10,
+          "pointDisplayMode": "dot"
+        },
+        "/leader2/core/gps": {
+          "historyMode": "all",
+          "pointSize": 10,
+          "pointDisplayMode": "dot"
+        },
+        "/f1/ukf/gps": {
+          "historyMode": "all",
+          "pointSize": 10,
+          "pointDisplayMode": "dot"
+        },
+        "/f1/ekf/geopoint": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f1/ekf/geopoint_centroid": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f1/ekf/geopoint_leader1": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f1/ekf/geopoint_leader2": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f2/ukf/gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/f3/ukf/gps": {
+          "historyMode": "all",
+          "pointSize": 6,
+          "pointDisplayMode": "dot"
+        },
+        "/floatsam_usv_0/core/gps_left": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/floatsam_usv_0/core/gps_right": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/floatsam_usv_0/core/rtk_position": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/floatsam_usv_0/ublox_gps_node/fix": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/floatsam_usv_1/core/gps_left": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/floatsam_usv_1/core/gps_right": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/floatsam_usv_1/core/rtk_position": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/floatsam_usv_1/ublox_gps_node/fix": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/ublox_gps_node/fix": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/owtt_beacon/lolo/estimate": {
+          "historyMode": "previous",
+          "pointSize": 20
+        },
+        "/owtt_beacon/lolo/estimate_alt": {
+          "historyMode": "none",
+          "pointSize": 30
+        },
+        "/floatsam_usv_0/fix": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/owtt_beacon/floatsam_usv_0/estimate_alt": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/owtt_beacon/floatsam_usv_0/estimate": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/owtt_beacon/floatsam_usv_0/reported": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/owtt_beacon/lolo/receiver/floatsam_usv_1": {
+          "historyMode": "none",
+          "pointSize": 6
+        },
+        "/owtt_beacon/lolo/receiver/floatsam_usv_0": {
+          "historyMode": "none",
+          "pointSize": 6
+        }
+      },
+      "layers": [],
+      "foxglovePanelTitle": "lolo beacon"
+    },
+    "RawMessages!24cnfzd": {
+      "defaultExpanded": false,
+      "topicPath": "/owtt_beacon/lolo/telemetry",
+      "foxglovePanelTitle": "lolo telemetry"
+    },
+    "CallService!7s60tt": {
+      "requestPayload": "{}",
+      "layout": "vertical",
+      "timeoutSeconds": 15,
+      "foxglovePanelTitle": "START TELEMETRY",
+      "serviceName": "/owtt_beacon/lolo/start",
+      "editingMode": false
+    },
+    "CallService!hnxnfm": {
+      "requestPayload": "{}",
+      "layout": "vertical",
+      "timeoutSeconds": 15,
+      "foxglovePanelTitle": "STOP TELEMETRY",
+      "serviceName": "/owtt_beacon/lolo/stop",
+      "editingMode": false
+    },
+    "CallService!abort01": {
+      "requestPayload": "{}",
+      "layout": "vertical",
+      "timeoutSeconds": 15,
+      "foxglovePanelTitle": "ABORT",
+      "serviceName": "/owtt_beacon/lolo/abort",
+      "editingMode": false
+    },
+    "CallService!enough1": {
+      "requestPayload": "{}",
+      "layout": "vertical",
+      "timeoutSeconds": 15,
+      "foxglovePanelTitle": "ENOUGH",
+      "serviceName": "/owtt_beacon/lolo/enough",
+      "editingMode": false
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": "map!2ri7c54",
+    "second": {
+      "first": "RawMessages!24cnfzd",
+      "second": {
+        "first": {
+          "first": "CallService!7s60tt",
+          "second": "CallService!hnxnfm",
+          "direction": "row",
+          "splitPercentage": 50
+        },
+        "second": {
+          "first": "CallService!abort01",
+          "second": "CallService!enough1",
+          "direction": "row",
+          "splitPercentage": 50
+        },
+        "direction": "column",
+        "splitPercentage": 50
+      },
+      "direction": "row",
+      "splitPercentage": 42
+    },
+    "direction": "column",
+    "splitPercentage": 68
+  }
+}

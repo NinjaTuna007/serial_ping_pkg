@@ -34,7 +34,7 @@
 
     <!-- Beacon telemetry -->
     <arg name="beacon_name" default="lolo" description="Beacon vehicle name (telemetry source namespace)"/>
-    <arg name="telemetry_fields" default="['bt']" description="Subset of position/depth/svs/speed/bt; default bt only"/>
+    <arg name="telemetry_fields" default="['position','depth','svs','speed','bt']" description="Subset of position/depth/svs/speed/bt. Position stays on every broadcast."/>
     <arg name="codec" default="dccl" description="Telemetry codec: dccl (BeaconTelemetry + CRC-8)"/>
     <arg name="latlon_topic" default="" description="Override beacon position topic"/>
     <arg name="depth_topic" default="" description="Override beacon depth topic (Float32, m +down)"/>
@@ -51,7 +51,7 @@
     <arg name="max_bt_len" default="32" description="Cap on bt text length (acoustic bandwidth)"/>
     <arg name="max_onair_bytes" default="64" description="Modem packet cap; encoded payload is trimmed to fit"/>
     <arg name="send_period_s" default="1.0" description="How often telemetry is pushed to the Teensy"/>
-    <arg name="position_seed_count" default="0" description="Include own GPS in the first N broadcasts then drop it (0=off)"/>
+    <arg name="position_seed_count" default="0" description="Extra GPS broadcasts when position is not a permanent field. 0 keeps the field list as written."/>
 
     <!-- Broadcast START/STOP command channel -->
     <arg name="autostart" default="false" description="Start broadcasting immediately (skip waiting for START_TELEMETRY)"/>

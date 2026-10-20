@@ -62,6 +62,21 @@ COMMAND_WORDS = {
 }
 
 
+def air_command_code(name):
+    """MQTT / Foxglove verb to the DCCL code the commander puts on the air.
+
+    ``START`` and ``STOP`` gate beacon telemetry. ``ABORT`` is the emergency
+    abort. ``ENOUGH`` clears the WARAPS queue. Unknown words return ``None``.
+    """
+    key = '' if name is None else str(name).strip().upper()
+    return {
+        'START': CODE_START_TELEMETRY,
+        'STOP': CODE_STOP_TELEMETRY,
+        'ABORT': CODE_ABORT,
+        'ENOUGH': CODE_ENOUGH,
+    }.get(key)
+
+
 def parse_command(text):
     """Service word to a command code, or ``None`` when it is not one."""
     key = '' if text is None else str(text).strip().lower().replace('-', '_')

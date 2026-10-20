@@ -37,8 +37,7 @@ from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
 from serial_ping_pkg.owtt_beacon import beacon_telemetry as bt_codec
 from serial_ping_pkg.owtt_beacon.mqtt_helper import MqttClient
 from serial_ping_pkg.common.acoustic_command import (
-    CODE_START_TELEMETRY,
-    CODE_STOP_TELEMETRY,
+    air_command_code,
     is_beacon_ok,
     modem_int,
     pack_command,
@@ -261,7 +260,7 @@ class SurfaceUnitNode(WireSafeSerialNode):
             return
         command = str(cmd.get('command', '')).upper()
         request_id = cmd.get('request_id')
-        if command not in ('START', 'STOP') or request_id is None:
+        if air_command_code(command) is None or request_id is None:
             return
         if request_id in self._acked_request_ids:
             return  # already handled this request
@@ -278,7 +277,9 @@ class SurfaceUnitNode(WireSafeSerialNode):
                 f"Not transmitting {command}: beacon.modem_id and own modem id "
                 "must both be 001-255.")
             return
-        code = CODE_START_TELEMETRY if command == 'START' else CODE_STOP_TELEMETRY
+        code = air_command_code(command)
+        if code is None:
+            return
         self._cmd_seq = 1 if self._cmd_seq >= 65535 else self._cmd_seq + 1
         try:
             blob = pack_command(code, dest=dest, sender=own, seq=self._cmd_seq)

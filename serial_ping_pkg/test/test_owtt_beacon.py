@@ -84,6 +84,67 @@ def test_crc8_mismatch_returns_none():
     assert decode_telemetry(bad) is None
 
 
+def test_full_packet_keeps_position_and_fits_the_modem():
+    """Every field, including position, fits the 64-byte modem packet."""
+    from serial_ping_pkg.common.acoustic_command import (
+        CODE_ABORT, CODE_ENOUGH, air_command_code)
+
+    payload = encode_telemetry(
+        ['position', 'depth', 'svs', 'speed', 'bt'],
+        position=(58.823229, 17.635998), depth=12.3, svs=1481.6,
+        speed=1.2, bt='Chilling')
+    assert len(payload) <= 64
+    again = encode_telemetry(
+        ['position', 'depth', 'svs', 'speed', 'bt'],
+        position=(58.823300, 17.636100), depth=12.4, svs=1481.6,
+        speed=1.2, bt='Chilling')
+    assert 'position' in decode_telemetry(again)
+    assert air_command_code('enough') == CODE_ENOUGH
+    assert air_command_code('ABORT') == CODE_ABORT
+    assert air_command_code('start') == air_command_code('START')
+    assert air_command_code('nope') is None
+
+
+def test_commander_puts_abort_and_enough_on_the_air():
+    """The commander modem sends the same DCCL verbs the beacon already acks."""
+    import json
+
+    from serial_ping_pkg.common.acoustic_command import (
+        CODE_ABORT, CODE_ENOUGH, unpack_command)
+    from serial_ping_pkg.owtt_beacon.surface_unit_node import SurfaceUnitNode
+
+    node = SurfaceUnitNode.__new__(SurfaceUnitNode)
+    node.beacon_modem_id = '007'
+    node.own_modem_id = '003'
+    node._cmd_seq = 0
+    node.is_commander = True
+    node._acked_request_ids = set()
+    node.pending_cmd = None
+    sent = []
+    node.send_command = sent.append
+
+    class _Log:
+        def info(self, *args, **kwargs):
+            return None
+
+        def error(self, *args, **kwargs):
+            return None
+
+    node.get_logger = lambda: _Log()
+    node._on_mqtt('cmd', json.dumps({'command': 'NOPE', 'request_id': 'z'}))
+    node._on_mqtt('cmd', json.dumps({'command': 'ENOUGH', 'request_id': 'e1'}))
+    node._on_mqtt('cmd', json.dumps({'command': 'ABORT', 'request_id': 'a1'}))
+    assert len(sent) == 2
+
+    def _app(raw):
+        size = int(raw[2:4])
+        return unpack_command(raw[4:4 + size])
+
+    enough, abort = _app(sent[0]), _app(sent[1])
+    assert enough['code'] == CODE_ENOUGH and enough['dest'] == 7 and enough['sender'] == 3
+    assert abort['code'] == CODE_ABORT and abort['dest'] == 7 and abort['confirm'] == 0
+
+
 def test_encode_only_enabled_fields():
     """Fields not in the enabled set are omitted even if a value is given."""
     payload = encode_telemetry(['bt'], position=(1.0, 2.0), bt='hi')

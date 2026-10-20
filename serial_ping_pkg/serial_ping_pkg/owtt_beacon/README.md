@@ -221,15 +221,15 @@ false. `telemetry_senders` is the beacon's `commander_modem_ids` list; empty
 means anyone.
 
 ```bash
-# Beacon (on the beacon vehicle, e.g. lolo) — broadcast EVERYTHING, accept
-# commands from anyone, seed its GPS for the first 10 broadcasts, every 2 s.
+# Beacon (on the beacon vehicle, e.g. lolo). Position, depth, sound velocity,
+# speed, and the behaviour-tree tip go out on every broadcast.
 ros2 launch serial_ping_pkg acoustic_cmd.launch \
     robot_name:=lolo own_modem_id:=007 handle_telemetry:=true
 ros2 launch serial_ping_pkg owtt_beacon_node.launch \
     beacon_name:=lolo own_modem_id:=007 \
     telemetry_fields:="['position','depth','svs','speed','bt']" \
-    position_seed_count:=30 \
-    send_period_s:=0.5 broadcast_interval_s:=4\
+    position_seed_count:=0 \
+    send_period_s:=1.0 broadcast_interval_s:=1 \
     commander_modem_ids:="[]"
 
 
@@ -249,9 +249,12 @@ ros2 launch serial_ping_pkg owtt_surface_unit_node.launch \
 ros2 launch serial_ping_pkg owtt_inference_node.launch \
     beacon_name:=lolo mqtt_host:=20.240.40.232 mqtt_port:=1884 command_repeat_s:=4.0
 
-# Start / stop the beacon broadcasting (e.g. from a Foxglove service-call panel)
-ros2 service call /owtt_beacon/lolo/start std_srvs/srv/Trigger
-ros2 service call /owtt_beacon/lolo/stop  std_srvs/srv/Trigger
+# From Foxglove (service-call panels) or the laptop. Each waits for the
+# beacon's acoustic OK, relayed by a surface unit.
+ros2 service call /owtt_beacon/lolo/start  std_srvs/srv/Trigger
+ros2 service call /owtt_beacon/lolo/stop   std_srvs/srv/Trigger
+ros2 service call /owtt_beacon/lolo/abort  std_srvs/srv/Trigger
+ros2 service call /owtt_beacon/lolo/enough std_srvs/srv/Trigger
 ```
 
 ### In simulation (smarcUnity)
@@ -302,7 +305,7 @@ overridable as a launch argument.
 | `broadcast_interval_s`                           | `1`                                                    | Teensy on-air cadence as a PPS multiple (1..4)                       |
 | `mode`                                           | `transmitter`                                          | `transmitter`                                                        |
 | `beacon_name`                                    | `lolo`                                                 | telemetry-source namespace                                           |
-| `telemetry_fields`                               | `['bt']`                                               | subset of `position`/`depth`/`svs`/`speed`/`bt`                      |
+| `telemetry_fields`                               | `position`, `depth`, `svs`, `speed`, `bt`              | subset of those five; position stays in every packet                 |
 | `codec`                                          | `dccl`                                                 | `dccl` (DCCL+CRC-8) or `ascii` (tagged `P…`); must match the surface unit |
 | `latlon_topic` / `depth_topic` / `speed_topic`   | derived                                                | override telemetry source topics                                     |
 | `svs_topic` / `svs_msg_type` / `svs_field`       | `/lolo/sensors/svs` / `svs_interfaces/msg/SVS` / `svs` | sound-velocity source                                                |
@@ -314,7 +317,7 @@ overridable as a launch argument.
 | `max_bt_len`                                     | `32`                                                   | bt text cap (DCCL proto `max_length` is 16)                          |
 | `max_onair_bytes`                                | `64`                                                   | modem packet cap; encoded payload auto-trimmed to fit                |
 | `send_period_s`                                  | `1.0`                                                  | **telemetry broadcast interval** (how often `$K` is pushed)          |
-| `position_seed_count`                            | `0`                                                    | include GPS in first N broadcasts then drop it                       |
+| `position_seed_count`                            | `0`                                                    | extra GPS bursts only when `position` is not already in the field list |
 | `autostart`                                      | `false`                                                | begin broadcasting without waiting for `START`                       |
 | `commander_modem_ids`                            | `[]`                                                   | modem ids allowed to command; `**[]` = anyone**                      |
 

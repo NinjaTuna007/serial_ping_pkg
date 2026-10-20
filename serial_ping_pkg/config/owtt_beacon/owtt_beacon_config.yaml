@@ -45,11 +45,10 @@ beacon:
   # from this id; leave empty to accept any (single-beacon deployments).
   modem_id: "101"
   # Which telemetry fields the beacon broadcasts. Subset of:
-  #   position | depth | svs | speed | bt  (DEFAULT: bt only -- keep payload tiny)
-  # NOTE: enable 'depth' if the beacon dives (slant->horizontal range correction)
-  # and 'svs' so the surface units use the beacon's in-situ sound velocity instead
-  # of a frozen default. SVS source is owtt.sound_velocity_* below.
-  telemetry_fields: ["bt"]
+  #   position | depth | svs | speed | bt
+  # Position stays in every packet. position_seed_count only adds GPS for the
+  # first N broadcasts when 'position' is not already in this list.
+  telemetry_fields: ["position", "depth", "svs", "speed", "bt"]
   # Application after the timestamp envelope: libdccl BeaconTelemetry + CRC-8.
   codec: "dccl"
   # Telemetry source topics (default derived from beacon.name).
@@ -65,7 +64,7 @@ beacon:
   max_bt_len: 32                # cap bt text length (acoustic bandwidth)
   max_onair_bytes: 64           # Succorfish NM3 packet cap; encoded payload is trimmed to fit
   send_period_s: 1.0            # how often the beacon pushes telemetry to the Teensy
-  position_seed_count: 0        # include own GPS in the first N broadcasts then drop it (0 = off)
+  position_seed_count: 0        # extra GPS broadcasts before dropping it; 0 because position is permanent
   # DCCL START_TELEMETRY / STOP_TELEMETRY addressed to this beacon's modem.
   # A command for another modem is ignored. Each accepted command is acked
   # with a DCCL OK addressed to the commander.

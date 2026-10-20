@@ -299,6 +299,12 @@ class InferenceNode(Node):
         self.start_srv = self.create_service(
             Trigger, f"/owtt_beacon/{self.beacon_name}/start",
             self._on_start_service, callback_group=self._srv_group)
+        self.abort_srv = self.create_service(
+            Trigger, f"/owtt_beacon/{self.beacon_name}/abort",
+            self._on_abort_service, callback_group=self._srv_group)
+        self.enough_srv = self.create_service(
+            Trigger, f"/owtt_beacon/{self.beacon_name}/enough",
+            self._on_enough_service, callback_group=self._srv_group)
         self.stop_srv = self.create_service(
             Trigger, f"/owtt_beacon/{self.beacon_name}/stop",
             self._on_stop_service, callback_group=self._srv_group)
@@ -312,7 +318,7 @@ class InferenceNode(Node):
         self.get_logger().info(
             f"OWTT inference node up: MQTT {self.mqtt_host}:{self.mqtt_port} "
             f"sub '{self.sub_topic}', publishing beacon '{self.beacon_name}' estimate. "
-            f"Services: /owtt_beacon/{self.beacon_name}/start|stop.")
+            f"Services: /owtt_beacon/{self.beacon_name}/start|stop|abort|enough.")
 
     # ------------------------------------------------------------------ MQTT thread
 
@@ -384,12 +390,18 @@ class InferenceNode(Node):
     def _on_stop_service(self, request, response):
         return self._run_command('STOP', response)
 
+    def _on_abort_service(self, request, response):
+        return self._run_command('ABORT', response)
+
+    def _on_enough_service(self, request, response):
+        return self._run_command('ENOUGH', response)
+
     def _run_command(self, command, response):
         """Publish the command to MQTT, re-sending until a surface unit relays
         the beacon's OK, or the timeout elapses. Returns a std_srvs/Trigger."""
         if not self._cmd_lock.acquire(blocking=False):
             response.success = False
-            response.message = "another START/STOP command is already in progress"
+            response.message = "another acoustic command is already in progress"
             return response
         try:
             request_id = uuid.uuid4().hex[:8]
