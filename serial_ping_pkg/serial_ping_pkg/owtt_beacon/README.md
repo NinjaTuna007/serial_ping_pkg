@@ -51,7 +51,7 @@ Decoded fields stay a Python dict. The surface unit does **not** invent a ROS
 `.msg` for them. It publishes JSON `std_msgs/String` for humans/Foxglove; the
 inference hop consumes the same object inside the MQTT range-report JSON.
 
-START_TELEMETRY, STOP_TELEMETRY, abort, and OK are DCCL `Command` (id 126).
+START_TELEMETRY, STOP_TELEMETRY, abort, enough, and OK are DCCL `Command` (id 126). Enough asks that vehicle to drop its current WARAPS mission. It is not an abort.
 
 Keep it small — the Succorfish NM3 caps a packet at **64 bytes** (timestamp
 envelope + DCCL + CRC-8). The beacon enforces this via

@@ -8,6 +8,7 @@ import pytest
 from serial_ping_pkg.common.acoustic_command import (
     CODE_ABORT,
     CODE_ABORT_ALL,
+    CODE_ENOUGH,
     CODE_OK,
     CODE_START_TELEMETRY,
     CODE_STOP_TELEMETRY,
@@ -15,6 +16,8 @@ from serial_ping_pkg.common.acoustic_command import (
     abort_applies,
     ack_matches,
     beacon_verb,
+    enough_applies,
+    enough_tst_body,
     pack_command,
     parse_command,
     parse_target,
@@ -117,6 +120,28 @@ def test_abort_rules():
     assert not abort_applies(dict(panic, sender=own), own)
     assert not abort_applies(dict(panic, confirm=0), own)
     assert not abort_applies(dict(targeted, confirm=CONFIRM_ALL), own)
+
+
+def test_enough_is_addressed_and_not_an_abort():
+    blob = pack_command(CODE_ENOUGH, dest=7, sender=67, seq=4)
+    cmd = unpack_command(blob)
+    assert cmd == {
+        'code': CODE_ENOUGH, 'dest': 7, 'sender': 67, 'seq': 4, 'confirm': 0}
+    assert enough_applies(cmd, 7)
+    assert not enough_applies(cmd, 5)
+    assert not enough_applies(dict(cmd, confirm=CONFIRM_ALL), 7)
+    assert not abort_applies(cmd, 7)
+    body = enough_tst_body('lolo')
+    assert body == {
+        'receiver': 'lolo',
+        'signal': '$enough',
+        'unit': '/lolo',
+        'command': 'signal-unit',
+        'sender': 'acoustic',
+    }
+    assert 'task-uuid' not in body and 'tst-uuid' not in body
+    assert parse_command('enough') == CODE_ENOUGH
+    assert parse_command('ENOUGH') == CODE_ENOUGH
 
 
 def test_ack_matches_seq_and_sender():
@@ -374,3 +399,102 @@ def test_stop_telemetry_is_ignored_without_the_telemetry_flag():
     node_out, _ = st.stop()
     assert not any(
         cmd and cmd['code'] == CODE_OK for cmd in _commands(st)), node_out
+
+
+@_skip
+@pytest.mark.skipif(exe('acoustic_cmd_node') is None, reason="node not built")
+def test_enough_publishes_tst_signal_and_acks():
+    """ENOUGH for this modem is a tst $enough, and it does not abort."""
+    import json
+
+    from std_msgs.msg import Empty, String
+
+    wasp = pytest.importorskip('wasp_bt.waraps.waraps_task_handler')
+
+    st = _start_cmd()
+    aborts = st.probe.collect(Empty, '/smarc/abort')
+    enoughs = st.probe.collect(String, '/waraps/tst/command')
+    handler = wasp.WaraPSTaskHandler(st.probe.node, {
+        'name': 'lolo',
+        'levels': [],
+        'agent-uuid': 'test-agent',
+    })
+    handler.tasks_executing = [
+        {'task-uuid': 'one', 'status': 'running', 'name': 'lolo-tuper'},
+        {'task-uuid': 'two', 'status': 'running', 'name': 'move-to'},
+    ]
+    # Feed the published string in ourselves so the handler and the
+    # subscription cannot both pop the queue.
+    st.probe.node.destroy_subscription(handler._wara_ps_tst_command_sub)
+    time.sleep(0.8)
+    blob = pack_command(CODE_ENOUGH, dest=7, sender=67, seq=11)
+    ok = pack_command(CODE_OK, dest=67, sender=7, seq=11)
+    deadline = time.time() + 8
+    while time.time() < deadline and not (
+            _dollar_b(ok) in st.fake.raw_bytes() and len(enoughs) >= 1):
+        st.fake.inject(_frame(67, blob))
+        time.sleep(0.3)
+    # A repeat of the same seq acks again and does not publish a second enough.
+    st.fake.inject(_frame(67, blob))
+    wait_until(
+        lambda: st.fake.raw_bytes().count(_dollar_b(ok)) >= 2, timeout=4)
+    other = pack_command(CODE_ENOUGH, dest=5, sender=67, seq=12)
+    st.fake.inject(_frame(67, other))
+    time.sleep(0.5)
+    if handler.tasks_executing and enoughs:
+        handler._tst_command_cb(enoughs[0])
+    node_out, _ = st.stop()
+    assert _dollar_b(ok) in st.fake.raw_bytes() and len(enoughs) == 1, node_out
+    assert len(aborts) == 0
+    body = json.loads(enoughs[0].data)
+    assert body['command'] == 'signal-unit'
+    assert body['signal'] == '$enough'
+    assert body['unit'] == '/vehicle'
+    assert 'task-uuid' not in body and 'tst-uuid' not in body
+    assert handler.tasks_executing == []
+    assert [task['status'] for task in handler.past_tasks] == ['enough', 'enough']
+    assert handler.emergency_flag is False
+    assert handler.aborted_flag is True
+
+
+@_skip
+@pytest.mark.skipif(exe('acoustic_cmd_node') is None, reason="node not built")
+def test_enough_service_waits_for_ok():
+    from serial_ping_interfaces.srv import AcousticCommand
+
+    st = _start_cmd()
+    time.sleep(1.0)
+    client = st.probe.node.create_client(AcousticCommand, '/acoustic_command')
+    assert wait_until(client.service_is_ready, timeout=8)
+
+    def watch():
+        answered = set()
+        while not stop_watch.is_set():
+            for sent in _payloads(st.fake.raw_bytes()):
+                cmd = unpack_command(sent)
+                if (cmd is None or cmd['code'] != CODE_ENOUGH
+                        or cmd['seq'] in answered):
+                    continue
+                answered.add(cmd['seq'])
+                reply = pack_command(
+                    CODE_OK, dest=cmd['sender'], sender=cmd['dest'], seq=cmd['seq'])
+                st.fake.inject(_frame(cmd['dest'], reply))
+                return
+            time.sleep(0.05)
+
+    stop_watch = threading.Event()
+    thread = threading.Thread(target=watch, daemon=True)
+    thread.start()
+    request = AcousticCommand.Request()
+    request.command = 'enough'
+    request.target = '005'
+    future = client.call_async(request)
+    assert wait_until(lambda: future.done(), timeout=8)
+    stop_watch.set()
+    thread.join(timeout=1)
+    result = future.result()
+    node_out, _ = st.stop()
+    sent = [c for c in _commands(st) if c and c['code'] == CODE_ENOUGH]
+    assert sent and sent[0]['dest'] == 5, node_out
+    assert result is not None and result.success, f'{result}\n{node_out}'
+    assert 'ENOUGH' in result.message

@@ -10,8 +10,10 @@ CRC-8 lives in ``dccl_codec``; a frame that fails it never becomes a dict.
   sender does not abort; it is the control center.
 * ``3`` START_TELEMETRY — beacon begins telemetry; ``dest`` is the beacon
 * ``4`` STOP_TELEMETRY — beacon stops telemetry; ``dest`` is the beacon
-* ``5`` OK — ack of a targeted abort or of telemetry start/stop.
+* ``5`` OK — ack of a targeted abort, enough, or telemetry start/stop.
   Panic does not get an ack. ``dest`` is whoever sent the command.
+* ``6`` ENOUGH — act only when ``dest`` is this modem and ``confirm`` is 0.
+  Clears the current WARAPS mission. It does not raise the emergency flag.
 
 Modem ``000`` is not a wildcard. A missing or zero target is not a panic.
 """
@@ -24,6 +26,7 @@ CODE_ABORT_ALL = 2
 CODE_START_TELEMETRY = 3
 CODE_STOP_TELEMETRY = 4
 CODE_OK = 5
+CODE_ENOUGH = 6
 
 CONFIRM_ALL = 0xA11
 
@@ -33,6 +36,7 @@ CODE_NAMES = {
     CODE_START_TELEMETRY: 'START_TELEMETRY',
     CODE_STOP_TELEMETRY: 'STOP_TELEMETRY',
     CODE_OK: 'OK',
+    CODE_ENOUGH: 'ENOUGH',
 }
 
 
@@ -54,6 +58,7 @@ COMMAND_WORDS = {
     'abort_all': CODE_ABORT_ALL,
     'start_telemetry': CODE_START_TELEMETRY,
     'stop_telemetry': CODE_STOP_TELEMETRY,
+    'enough': CODE_ENOUGH,
 }
 
 
@@ -159,6 +164,34 @@ def ack_matches(cmd, envelope_id, seq, own_id, expect_sender=None):
     if expect_sender is not None and cmd['sender'] != int(expect_sender):
         return False
     return True
+
+
+def enough_applies(cmd, own_id):
+    """True when this vehicle should enough its current WARAPS mission."""
+    own = modem_int(own_id)
+    if own is None or cmd is None:
+        return False
+    return (cmd['code'] == CODE_ENOUGH and cmd['confirm'] == 0
+            and cmd['dest'] == own)
+
+
+def enough_tst_body(unit_name):
+    """JSON object the MQTT bridge would deliver for a tst ``$enough``.
+
+    Same shape as the QGIS ``signal-unit`` on ``tst/command``. No tst uuid:
+    wasp enoughs every task this vehicle is running and leaves the emergency
+    flag down.
+    """
+    name = '' if unit_name is None else str(unit_name).strip().strip('/')
+    if not name:
+        name = 'vehicle'
+    return {
+        'receiver': name,
+        'signal': '$enough',
+        'unit': f'/{name}',
+        'command': 'signal-unit',
+        'sender': 'acoustic',
+    }
 
 
 def abort_applies(cmd, own_id):

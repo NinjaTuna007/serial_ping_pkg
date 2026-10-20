@@ -7,7 +7,7 @@ import "dccl/option_extensions.proto";
 // ASCII $G / $B / TEL: decimals live in ascii_on_air.py — a separate codec.
 // Private one-byte DCCL IDs: 124-127 (http://gobysoft.org/wiki/DcclIdTable).
 // 126 = Command. code: 1 ABORT, 2 ABORT_ALL, 3 START_TELEMETRY,
-// 4 STOP_TELEMETRY, 5 OK.
+// 4 STOP_TELEMETRY, 5 OK, 6 ENOUGH.
 // ABORT_ALL is panic only when confirm is 0xA11. Any other confirm is dropped.
 // dest/sender are modem addresses 1-255. 0 is not a fleet wildcard.
 // Grain: lat/lon 7 dp (~1 cm), depth 1 cm, svs 0.1 m/s, speed 1 cm/s.
@@ -45,8 +45,10 @@ message Pose {
 // Listeners ignore a frame whose CRC fails. ABORT acts only when dest is
 // this modem. ABORT_ALL acts only when confirm is 0xA11 (2577) and the
 // receiver is not the sender (the control center stays up).
-// START_TELEMETRY, STOP_TELEMETRY and OK use confirm 0 and are addressed
-// (dest is the beacon, or for OK the commander who asked). seq is the
+// START_TELEMETRY, STOP_TELEMETRY, ENOUGH and OK use confirm 0 and are
+// addressed (dest is the beacon or vehicle, or for OK the commander who
+// asked). ENOUGH is not an abort: the receiver publishes a WARAPS
+// signal-unit $enough and does not touch smarc/abort. seq is the
 // sender's counter.
 message Command {
   option (dccl.msg) = {
