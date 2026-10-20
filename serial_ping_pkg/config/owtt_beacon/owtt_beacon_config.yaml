@@ -66,14 +66,11 @@ beacon:
   max_onair_bytes: 64           # Succorfish NM3 packet cap; encoded payload is trimmed to fit
   send_period_s: 1.0            # how often the beacon pushes telemetry to the Teensy
   position_seed_count: 0        # include own GPS in the first N broadcasts then drop it (0 = off)
-  # Broadcast START/STOP command channel. The beacon does NOT broadcast until it
-  # hears the start keyword over the air, and stops on the stop keyword. Each
-  # accepted transition is acked once with an OK broadcast.
-  autostart: false              # true = start broadcasting immediately (skip START)
+  # DCCL START_TELEMETRY / STOP_TELEMETRY addressed to this beacon's modem.
+  # A command for another modem is ignored. Each accepted command is acked
+  # with a DCCL OK addressed to the commander.
+  autostart: false              # true = start broadcasting immediately
   commander_modem_ids: []       # modem ids allowed to command; empty = accept anyone
-  start_keyword: "START"
-  stop_keyword: "STOP"
-  ack_message: "OK"
 
 # This surface unit (receiver side).
 surface_unit:

@@ -6,6 +6,10 @@ import "dccl/option_extensions.proto";
 // Contract for beacon.codec:=dccl. Packed by serial_ping_pkg.common.dccl_codec.
 // ASCII $G / $B / TEL: decimals live in ascii_on_air.py — a separate codec.
 // Private one-byte DCCL IDs: 124-127 (http://gobysoft.org/wiki/DcclIdTable).
+// 126 = Command. code: 1 ABORT, 2 ABORT_ALL, 3 START_TELEMETRY,
+// 4 STOP_TELEMETRY, 5 OK.
+// ABORT_ALL is panic only when confirm is 0xA11. Any other confirm is dropped.
+// dest/sender are modem addresses 1-255. 0 is not a fleet wildcard.
 // Grain: lat/lon 7 dp (~1 cm), depth 1 cm, svs 0.1 m/s, speed 1 cm/s.
 // Depth range is 0–3000 m (3 km). Acoustic-relay padded DDD.DD stays 999.99.
 //
@@ -35,4 +39,24 @@ message Pose {
   required double lat = 1 [(dccl.field) = { min: -90 max: 90 precision: 7 }];
   required double lon = 2 [(dccl.field) = { min: -180 max: 180 precision: 7 }];
   optional double depth = 3 [(dccl.field) = { min: 0 max: 3000 precision: 2 }];
+}
+
+// One acoustic command. The id is the family; `code` is the verb.
+// Listeners ignore a frame whose CRC fails. ABORT acts only when dest is
+// this modem. ABORT_ALL acts only when confirm is 0xA11 (2577) and the
+// receiver is not the sender (the control center stays up).
+// START_TELEMETRY, STOP_TELEMETRY and OK use confirm 0 and are addressed
+// (dest is the beacon, or for OK the commander who asked). seq is the
+// sender's counter.
+message Command {
+  option (dccl.msg) = {
+    codec_version: 4
+    id: 126
+    max_bytes: 16
+  };
+  required uint32 code = 1 [(dccl.field) = { min: 0 max: 15 }];
+  required uint32 dest = 2 [(dccl.field) = { min: 0 max: 255 }];
+  required uint32 sender = 3 [(dccl.field) = { min: 0 max: 255 }];
+  required uint32 seq = 4 [(dccl.field) = { min: 0 max: 65535 }];
+  required uint32 confirm = 5 [(dccl.field) = { min: 0 max: 65535 }];
 }

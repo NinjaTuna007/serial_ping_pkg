@@ -10,7 +10,7 @@ question: can the UART carry a non-printable payload at all? See
 
 | File | Codec | Who uses it |
 |------|--------|-------------|
-| [`dccl_acoustic.proto`](dccl_acoustic.proto) | DCCL bit layout (`BeaconTelemetry` id 124, `Pose` id 125) | beacon telemetry; stick GPS `Pose` via `$K` |
+| [`dccl_acoustic.proto`](dccl_acoustic.proto) | DCCL bit layout (`BeaconTelemetry` id 124, `Pose` id 125, `Command` id 126) | beacon telemetry; stick GPS `Pose` via `$K`; addressed abort and telemetry start/stop |
 | [`../serial_ping_pkg/common/ascii_on_air.py`](../serial_ping_pkg/common/ascii_on_air.py) | ASCII decimal strings | `$G` (Teensy ASCII store), relay/TWTT `$B` |
 | [`../serial_ping_pkg/common/dccl_codec.py`](../serial_ping_pkg/common/dccl_codec.py) | `pack` / `unpack` + CRC-8-ATM | only place nodes touch libdccl |
 | [`../serial_ping_pkg/common/dccl_acoustic_pb2.py`](../serial_ping_pkg/common/dccl_acoustic_pb2.py) | generated stubs | **do not edit**; regenerate from this proto |

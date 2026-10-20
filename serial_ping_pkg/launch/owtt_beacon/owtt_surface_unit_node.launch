@@ -49,10 +49,7 @@
     <arg name="commander" default="false" description="Exactly one unit true: only it transmits acoustic START/STOP"/>
     <arg name="beacon_name" default="lolo" description="Beacon being tracked"/>
     <arg name="codec" default="dccl" description="Telemetry codec: dccl (BeaconTelemetry + CRC-8)"/>
-    <arg name="beacon_modem_id" default="101" description="Beacon modem id; empty = accept any telemetry frame"/>
-    <arg name="start_keyword" default="START" description="Acoustic START keyword (must match the beacon)"/>
-    <arg name="stop_keyword" default="STOP" description="Acoustic STOP keyword (must match the beacon)"/>
-    <arg name="ack_message" default="OK" description="Beacon ack keyword to listen for (must match the beacon)"/>
+    <arg name="beacon_modem_id" default="101" description="Beacon modem id. Required to transmit START_TELEMETRY/STOP_TELEMETRY. Empty = accept any telemetry frame."/>
 
     <!-- MQTT uplink -->
     <arg name="mqtt_enabled" default="true" description="Publish range reports to MQTT"/>
@@ -88,9 +85,6 @@
         <param name="beacon.name" type="str" value="$(var beacon_name)"/>
         <param name="beacon.codec" type="str" value="$(var codec)"/>
         <param name="beacon.modem_id" type="str" value="$(var beacon_modem_id)"/>
-        <param name="beacon.start_keyword" type="str" value="$(var start_keyword)"/>
-        <param name="beacon.stop_keyword" type="str" value="$(var stop_keyword)"/>
-        <param name="beacon.ack_message" type="str" value="$(var ack_message)"/>
         <param name="mqtt.enabled" value="$(var mqtt_enabled)"/>
         <param name="mqtt.host" type="str" value="$(var mqtt_host)"/>
         <param name="mqtt.port" value="$(var mqtt_port)"/>
@@ -99,4 +93,9 @@
         <param name="mqtt.topic_prefix" type="str" value="$(var mqtt_topic_prefix)"/>
         <param name="mqtt.qos" value="$(var mqtt_qos)"/>
     </node>
+
+    <include file="$(find-pkg-share serial_ping_pkg)/launch/acoustic_cmd.launch">
+        <arg name="robot_name" value="$(var robot_name)"/>
+        <arg name="own_modem_id" value="$(var own_modem_id)"/>
+    </include>
 </launch>

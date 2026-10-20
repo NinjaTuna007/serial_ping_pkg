@@ -36,6 +36,14 @@ from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
 from serial_ping_pkg.owtt_beacon import beacon_telemetry as bt_codec
 from serial_ping_pkg.owtt_beacon.mqtt_helper import MqttClient
+from serial_ping_pkg.common.acoustic_command import (
+    CODE_START_TELEMETRY,
+    CODE_STOP_TELEMETRY,
+    is_beacon_ok,
+    modem_int,
+    pack_command,
+    unpack_command,
+)
 
 
 class SurfaceUnitNode(WireSafeSerialNode):
@@ -87,10 +95,6 @@ class SurfaceUnitNode(WireSafeSerialNode):
         # If set, only telemetry frames from this modem id are accepted. Empty =
         # accept any telemetry frame (single-beacon deployments).
         self.declare_parameter('beacon.modem_id', beacon_cfg.get('modem_id', ''), id_desc)
-        # Command keywords (must match the beacon's).
-        self.declare_parameter('beacon.start_keyword', beacon_cfg.get('start_keyword', 'START'))
-        self.declare_parameter('beacon.stop_keyword', beacon_cfg.get('stop_keyword', 'STOP'))
-        self.declare_parameter('beacon.ack_message', beacon_cfg.get('ack_message', 'OK'))
 
         # --- MQTT uplink ---
         self.declare_parameter('mqtt.enabled', mqtt_cfg.get('enabled', True))
@@ -131,9 +135,7 @@ class SurfaceUnitNode(WireSafeSerialNode):
             f"Telemetry codec: {self.telemetry_codec} (DCCL+CRC-8)")
         beacon_modem_raw = self.get_parameter('beacon.modem_id').value
         self.beacon_modem_id = ti.normalize_modem_id(beacon_modem_raw) if beacon_modem_raw not in (None, '') else ''
-        self.start_keyword = self.get_parameter('beacon.start_keyword').get_parameter_value().string_value
-        self.stop_keyword = self.get_parameter('beacon.stop_keyword').get_parameter_value().string_value
-        self.ack_message = self.get_parameter('beacon.ack_message').get_parameter_value().string_value
+        self._cmd_seq = 0
 
         self.mqtt_enabled = self.get_parameter('mqtt.enabled').get_parameter_value().bool_value
         self.mqtt_host = self.get_parameter('mqtt.host').get_parameter_value().string_value
@@ -248,8 +250,9 @@ class SurfaceUnitNode(WireSafeSerialNode):
     def _on_mqtt(self, topic, payload):
         """MQTT thread: a START/STOP request from the inference node.
 
-        The commander transmits the acoustic keyword; every unit remembers the
-        pending command so that whoever hears the beacon's OK relays the ack.
+        The commander transmits a DCCL START_TELEMETRY or STOP_TELEMETRY
+        addressed to ``beacon.modem_id``. Every unit remembers the pending
+        command so that whoever hears the beacon's OK relays the ack.
         The inference node re-publishes until acked, so we de-dup by request_id.
         """
         try:
@@ -264,14 +267,27 @@ class SurfaceUnitNode(WireSafeSerialNode):
             return  # already handled this request
         self.pending_cmd = {'command': command, 'request_id': request_id}
         if self.is_commander:
-            keyword = self.start_keyword if command == 'START' else self.stop_keyword
-            try:
-                self.send_command(ti.build_broadcast_command(keyword))
-                self.get_logger().info(
-                    f"[commander] transmitting acoustic {command} ('{keyword}') "
-                    f"for request {request_id}.")
-            except Exception as e:
-                self.get_logger().error(f"Failed to transmit {command}: {e}")
+            self._transmit_telemetry_command(command, request_id)
+
+    def _transmit_telemetry_command(self, command, request_id):
+        """Addressed DCCL start/stop. No beacon id means nothing is sent."""
+        dest = modem_int(self.beacon_modem_id)
+        own = modem_int(self.own_modem_id)
+        if dest is None or own is None:
+            self.get_logger().error(
+                f"Not transmitting {command}: beacon.modem_id and own modem id "
+                "must both be 001-255.")
+            return
+        code = CODE_START_TELEMETRY if command == 'START' else CODE_STOP_TELEMETRY
+        self._cmd_seq = 1 if self._cmd_seq >= 65535 else self._cmd_seq + 1
+        try:
+            blob = pack_command(code, dest=dest, sender=own, seq=self._cmd_seq)
+            self.send_command(ti.build_broadcast_command(blob))
+            self.get_logger().info(
+                f"[commander] transmitting {command} to modem {dest:03d} "
+                f"seq {self._cmd_seq} for request {request_id}.")
+        except Exception as e:
+            self.get_logger().error(f"Failed to transmit {command}: {e}")
 
     def _on_beacon_ack(self, modem_id):
         """Heard the beacon's OK; relay an ack to MQTT for the pending command."""
@@ -323,10 +339,12 @@ class SurfaceUnitNode(WireSafeSerialNode):
         broadcast = ti.parse_broadcast_payload(line)
         if broadcast is not None:
             modem_id, payload_data = broadcast
-            text = ti.application_as_text(payload_data)
-            if text is not None and text.strip() == self.ack_message and \
-                    (not self.beacon_modem_id or modem_id == self.beacon_modem_id):
-                self._on_beacon_ack(modem_id)
+            cmd = unpack_command(payload_data)
+            if cmd is not None:
+                from_beacon = (
+                    not self.beacon_modem_id or modem_id == self.beacon_modem_id)
+                if is_beacon_ok(cmd, modem_id) and from_beacon:
+                    self._on_beacon_ack(modem_id)
                 return
             telem_payload = payload_data
             if self.beacon_modem_id and modem_id != self.beacon_modem_id:

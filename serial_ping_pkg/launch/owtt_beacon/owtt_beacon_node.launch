@@ -54,11 +54,8 @@
     <arg name="position_seed_count" default="0" description="Include own GPS in the first N broadcasts then drop it (0=off)"/>
 
     <!-- Broadcast START/STOP command channel -->
-    <arg name="autostart" default="false" description="Start broadcasting immediately (skip waiting for START)"/>
-    <arg name="commander_modem_ids" default="[]" description="Modem ids allowed to command START/STOP; empty = anyone"/>
-    <arg name="start_keyword" default="START" description="Broadcast keyword that starts telemetry"/>
-    <arg name="stop_keyword" default="STOP" description="Broadcast keyword that stops telemetry"/>
-    <arg name="ack_message" default="OK" description="Broadcast ack sent on an accepted START/STOP"/>
+    <arg name="autostart" default="false" description="Start broadcasting immediately (skip waiting for START_TELEMETRY)"/>
+    <arg name="commander_modem_ids" default="[]" description="Modem ids allowed to command this beacon; empty = anyone"/>
 
     <node pkg="serial_ping_pkg"
           exec="owtt_beacon_node"
@@ -91,8 +88,12 @@
         <param name="beacon.position_seed_count" value="$(var position_seed_count)"/>
         <param name="beacon.autostart" value="$(var autostart)"/>
         <param name="beacon.commander_modem_ids" value="$(var commander_modem_ids)"/>
-        <param name="beacon.start_keyword" type="str" value="$(var start_keyword)"/>
-        <param name="beacon.stop_keyword" type="str" value="$(var stop_keyword)"/>
-        <param name="beacon.ack_message" type="str" value="$(var ack_message)"/>
     </node>
+
+    <include file="$(find-pkg-share serial_ping_pkg)/launch/acoustic_cmd.launch">
+        <arg name="robot_name" value="$(var robot_name)"/>
+        <arg name="own_modem_id" value="$(var own_modem_id)"/>
+        <arg name="handle_telemetry" value="true"/>
+        <arg name="telemetry_senders" value="$(var commander_modem_ids)"/>
+    </include>
 </launch>

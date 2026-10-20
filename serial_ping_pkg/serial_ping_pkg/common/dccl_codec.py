@@ -12,7 +12,8 @@ CRC-8 is CRC-8-ATM / ITU-T I.432.1 (poly 0x07, init 0x00). DCCL itself does
 not checksum; the extra byte is so a flipped bit in a packed field is dropped
 instead of becoming a plausible lat.
 
-Private DCCL ids 124-127 (one-byte). 124 = BeaconTelemetry, 125 = Pose.
+Private DCCL ids 124-127 (one-byte). 124 = BeaconTelemetry, 125 = Pose,
+126 = Command.
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ _CRC8_INIT = 0x00
 
 ID_BEACON_TELEMETRY = 124
 ID_POSE = 125
+ID_COMMAND = 126
 
 
 def crc8_atm(data):
@@ -116,6 +118,7 @@ def _codec():
     codec = dccl.Codec()
     codec.load('BeaconTelemetry')
     codec.load('Pose')
+    codec.load('Command')
     _CODEC = codec
     return _CODEC
 

@@ -220,6 +220,10 @@ class FakeSerialPort:
         with self._lock:
             return list(self._commands)
 
+    def raw_bytes(self):
+        with self._lock:
+            return bytes(self._raw)
+
     def wait_for_command(self, predicate, timeout=8.0):
         """Wait until any received command satisfies ``predicate`` (str or fn)."""
         if isinstance(predicate, str):

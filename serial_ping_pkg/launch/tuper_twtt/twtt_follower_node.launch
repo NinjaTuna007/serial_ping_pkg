@@ -22,4 +22,10 @@
         <param name="leader_gps_topic" type="str" value="$(var leader_gps_topic)"/>
         <param name="leader_gps_msg_type" type="str" value="$(var leader_gps_msg_type)"/>
     </node>
+
+    <arg name="own_modem_id" default="" description="This modem. Empty refuses to send or act on acoustic commands."/>
+    <include file="$(find-pkg-share serial_ping_pkg)/launch/acoustic_cmd.launch">
+        <arg name="robot_name" value="$(var driver_namespace)"/>
+        <arg name="own_modem_id" value="$(var own_modem_id)"/>
+    </include>
 </launch>

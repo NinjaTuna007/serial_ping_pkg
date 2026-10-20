@@ -1,0 +1,8 @@
+# Transmit an acoustic abort from this modem.
+# target "007" aborts that modem and waits for its OK.
+# target "all" shouts ABORT_ALL a few times and returns without waiting.
+# "" / "0" / "000" are rejected and nothing is sent.
+string target
+---
+bool success
+string message

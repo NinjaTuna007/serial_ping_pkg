@@ -249,11 +249,31 @@ def test_owtt_beacon_configures_and_acks_start():
     # own_modem_id 101, listen 000, interval 1 -> transmitter config.
     assert st.fake.wait_for_command('$Y101T0001s', timeout=8), \
         f"no transmitter config; got {st.fake.commands()!r}"
-    # A commander (modem 007) broadcasts START; the beacon must ack with $B02OK.
+    st.start_node(
+        exe('acoustic_cmd_node'),
+        ['-p', 'own_modem_id:=101', '-p', 'handle_telemetry:=true'])
+    from serial_ping_pkg.common.acoustic_command import (
+        CODE_OK, CODE_START_TELEMETRY, pack_command)
+    # ASCII START is not a command. The ack comes from acoustic_cmd_node.
     st.fake.inject('#B00705START')
-    saw_ack = st.fake.wait_for_command('$B02OK', timeout=8)
+    time.sleep(0.4)
+    # Commander 007 starts beacon 101. The ack is a DCCL OK back to 007.
+    start = pack_command(CODE_START_TELEMETRY, dest=101, sender=7, seq=4)
+    ok = pack_command(CODE_OK, dest=7, sender=101, seq=4)
+    needle = b'$B' + f'{len(ok):02d}'.encode('ascii') + ok
+    deadline = time.time() + 8
+    while time.time() < deadline and needle not in st.fake.raw_bytes():
+        st.fake.inject(b'#B007' + f'{len(start):02d}'.encode('ascii') + start)
+        time.sleep(0.3)
+    saw_ack = needle in st.fake.raw_bytes()
+    # A start addressed to someone else must not produce another OK.
+    other = pack_command(CODE_START_TELEMETRY, dest=5, sender=7, seq=5)
+    st.fake.inject(b'#B007' + f'{len(other):02d}'.encode('ascii') + other)
+    time.sleep(0.4)
     node_out, _ = st.stop()
-    assert saw_ack, f"beacon did not ack START with $B02OK; got {st.fake.commands()!r}\n{node_out}"
+    assert saw_ack, f"beacon did not ack START_TELEMETRY; wire={st.fake.raw_bytes()!r}\n{node_out}"
+    stray = pack_command(CODE_OK, dest=7, sender=101, seq=5)
+    assert (b'$B' + f'{len(stray):02d}'.encode('ascii') + stray) not in st.fake.raw_bytes()
 
 
 @_skip

@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Same namespace as the driver and the vehicle. Relative smarc/abort
+         becomes /<robot_name>/smarc/abort. -->
+    <arg name="robot_name" default="lolo" description="Namespace shared with the driver"/>
+    <arg name="own_modem_id" default="007" description="This modem. Panic from here does not abort it."/>
+    <arg name="abort_topic" default="smarc/abort" description="SMARC abort topic (std_msgs/Empty), relative to robot_name"/>
+    <arg name="handle_telemetry" default="false" description="Ack START_TELEMETRY/STOP_TELEMETRY addressed to this modem and publish acoustic_telemetry"/>
+    <arg name="telemetry_senders" default="" description="Modem ids allowed to start or stop telemetry; empty = anyone"/>
+    <arg name="allowed_senders" default="" description="Comma-separated modem ids allowed to abort this vehicle; empty = anyone"/>
+    <arg name="ack_timeout_s" default="3.0" description="How long a targeted abort waits for one OK"/>
+    <arg name="max_attempts" default="3" description="Targeted abort sends this many times"/>
+    <arg name="panic_shouts" default="3" description="ABORT_ALL repeats, then the service returns"/>
+    <arg name="panic_gap_s" default="2.0" description="Gap between panic shouts"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="acoustic_cmd_node"
+          name="acoustic_cmd_node"
+          output="screen"
+          namespace="$(var robot_name)">
+        <param name="own_modem_id" type="str" value="$(var own_modem_id)"/>
+        <param name="abort_topic" type="str" value="$(var abort_topic)"/>
+        <param name="allowed_senders" type="str" value="$(var allowed_senders)"/>
+        <param name="handle_telemetry" value="$(var handle_telemetry)"/>
+        <param name="telemetry_senders" type="str" value="$(var telemetry_senders)"/>
+        <param name="ack_timeout_s" value="$(var ack_timeout_s)"/>
+        <param name="max_attempts" value="$(var max_attempts)"/>
+        <param name="panic_shouts" value="$(var panic_shouts)"/>
+        <param name="panic_gap_s" value="$(var panic_gap_s)"/>
+    </node>
+</launch>

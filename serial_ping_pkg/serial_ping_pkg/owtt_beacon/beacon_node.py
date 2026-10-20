@@ -26,12 +26,10 @@ ranges into horizontal ranges (the beacon may be submerged).
 Like the OWTT leader, it waits for the Teensy's ``#Y,OK,<own_id>`` mode-apply
 confirmation before sending, and always resets the Teensy to WIRE mode on exit.
 
-Command channel: the beacon does NOT broadcast until it hears a ``START``
-broadcast (and stops on ``STOP``); unless ``autostart`` is set. Every command is
-acknowledged with an ``OK`` broadcast -- on a real transition AND when already in
-the requested state (idempotent), so a request/response caller always gets a
-definitive reply. ``commander_modem_ids`` optionally restricts who may command
-(empty = anyone).
+Command channel: ``acoustic_cmd_node`` hears the DCCL command and publishes
+``START_TELEMETRY`` or ``STOP_TELEMETRY`` on ``acoustic_telemetry``. This node
+follows that topic. It does not broadcast until a start arrives, unless
+``autostart`` is set. The acoustic command node sends the DCCL ``OK``.
 """
 
 import json
@@ -101,15 +99,13 @@ class BeaconNode(WireSafeSerialNode):
         self.declare_parameter('beacon.position_seed_count', beacon_cfg.get('position_seed_count', 0))
 
         # --- Broadcast START/STOP command channel ---
-        # The beacon does NOT broadcast until it hears a START broadcast (and
-        # stops on STOP). Both are acknowledged once with an OK broadcast.
+        # The beacon does NOT broadcast until it hears a DCCL START addressed
+        # to this modem (and stops on STOP). Both are acknowledged with a
+        # DCCL OK sent immediately as $B.
         self.declare_parameter('beacon.autostart', beacon_cfg.get('autostart', False))
         # Modem ids allowed to command START/STOP. Empty list = accept anyone.
         self.declare_parameter('beacon.commander_modem_ids',
                                beacon_cfg.get('commander_modem_ids', []), id_desc)
-        self.declare_parameter('beacon.start_keyword', beacon_cfg.get('start_keyword', 'START'))
-        self.declare_parameter('beacon.stop_keyword', beacon_cfg.get('stop_keyword', 'STOP'))
-        self.declare_parameter('beacon.ack_message', beacon_cfg.get('ack_message', 'OK'))
 
         self.own_modem_id = ti.normalize_modem_id(self.get_parameter('teensy.own_modem_id').value)
         self.listen_for_modem_id = ti.normalize_modem_id(self.get_parameter('teensy.listen_for_modem_id').value)
@@ -144,9 +140,6 @@ class BeaconNode(WireSafeSerialNode):
         self.autostart = self.get_parameter('beacon.autostart').get_parameter_value().bool_value
         commander_ids_raw = self.get_parameter('beacon.commander_modem_ids').value or []
         self.commander_modem_ids = {ti.normalize_modem_id(c) for c in commander_ids_raw}
-        self.start_keyword = self.get_parameter('beacon.start_keyword').get_parameter_value().string_value
-        self.stop_keyword = self.get_parameter('beacon.stop_keyword').get_parameter_value().string_value
-        self.ack_message = self.get_parameter('beacon.ack_message').get_parameter_value().string_value
 
         if not self.telemetry_fields:
             self.telemetry_fields = ['bt']
@@ -197,6 +190,8 @@ class BeaconNode(WireSafeSerialNode):
             broadcast_interval_s=self.broadcast_interval_s,
         ))
 
+        self.create_subscription(
+            String, 'acoustic_telemetry', self._on_telemetry_command, 10)
         self._setup_subscriptions()
 
         self.send_timer = self.create_timer(self.send_period_s, self.push_telemetry)
@@ -206,7 +201,8 @@ class BeaconNode(WireSafeSerialNode):
             f"OWTT beacon '{self.name}' initialised (transmitter mode); fields="
             f"{self.telemetry_fields}, every {self.send_period_s}s. "
             f"Telemetry is {'ON (autostart)' if self.broadcasting else 'OFF'}; "
-            f"waiting for '{self.start_keyword}'/'{self.stop_keyword}' from {cmd_src}.")
+            f"waiting for START_TELEMETRY/STOP_TELEMETRY on acoustic_telemetry "
+            f"(air address {self.own_modem_id}, from {cmd_src}).")
 
     # ------------------------------------------------------------------ setup
 
@@ -291,7 +287,7 @@ class BeaconNode(WireSafeSerialNode):
             self.handle_line(data)
 
     def _on_serial_line(self, line):
-        """Parse an inbound line: config confirmation + START/STOP commands.
+        """Parse an inbound line: config confirmation + DCCL START/STOP.
 
         The Teensy forwards every received modem broadcast to the host even in
         transmitter mode, so the beacon can listen for command broadcasts here.
@@ -312,55 +308,21 @@ class BeaconNode(WireSafeSerialNode):
         if isinstance(line, str) and self.handle_config_line(line):
             return
 
-        broadcast = ti.parse_broadcast_payload(line)
-        if broadcast is not None:
-            modem_id, payload = broadcast
-            text = ti.application_as_text(payload)
-            if text is None:
-                return
-            self._handle_command(modem_id, text.strip())
-
-    def _commander_allowed(self, modem_id):
-        # Empty allow-list == accept commands from anyone.
-        return (not self.commander_modem_ids) or (modem_id in self.commander_modem_ids)
-
-    def _handle_command(self, modem_id, payload):
-        if payload == self.start_keyword:
-            cmd = 'START'
-        elif payload == self.stop_keyword:
-            cmd = 'STOP'
-        else:
-            return  # not a command broadcast
-
-        if not self._commander_allowed(modem_id):
-            self.get_logger().info(
-                f"Ignoring {cmd} from modem {modem_id} (not in commander list).",
-                throttle_duration_sec=5.0)
+    def _on_telemetry_command(self, msg):
+        verb = (msg.data or '').split(' ', 1)[0]
+        if verb not in ('START_TELEMETRY', 'STOP_TELEMETRY'):
             return
-
-        want_broadcasting = (cmd == 'START')
+        want_broadcasting = (verb == 'START_TELEMETRY')
         transition = (want_broadcasting != self.broadcasting)
         self.broadcasting = want_broadcasting
-        # Always acknowledge so the commanding side gets a definitive reply
-        # (idempotent): on a real transition or when already in the requested
-        # state. Only the state change is logged distinctly.
         if transition:
             self.get_logger().info(
-                f"{cmd} from modem {modem_id}: telemetry "
-                f"{'STARTED' if self.broadcasting else 'STOPPED'}; acking '{self.ack_message}'.")
+                f"{verb}: telemetry "
+                f"{'STARTED' if self.broadcasting else 'STOPPED'}.")
         else:
             self.get_logger().info(
-                f"{cmd} from modem {modem_id}: already "
-                f"{'broadcasting' if self.broadcasting else 'stopped'}; "
-                f"acking '{self.ack_message}' (idempotent).")
-        self._broadcast_ack()
-
-    def _broadcast_ack(self):
-        """Broadcast the ack message immediately (passed straight to the modem)."""
-        try:
-            self.send_command(ti.build_broadcast_command(self.ack_message))
-        except Exception as e:
-            self.get_logger().error(f"Failed to broadcast ack: {e}")
+                f"{verb}: already "
+                f"{'broadcasting' if self.broadcasting else 'stopped'}.")
 
     def push_telemetry(self):
         if not self.broadcasting:

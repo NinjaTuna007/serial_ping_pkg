@@ -123,4 +123,9 @@
         <param name="topics.marker_topic" type="str" value="$(var marker_topic)"/>
         <param name="topics.map_frame" type="str" value="$(var map_frame)"/>
     </node>
+
+    <include file="$(find-pkg-share serial_ping_pkg)/launch/acoustic_cmd.launch">
+        <arg name="robot_name" value="$(var robot_name)"/>
+        <arg name="own_modem_id" value="$(var own_modem_id)"/>
+    </include>
 </launch>

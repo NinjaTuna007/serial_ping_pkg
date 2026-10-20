@@ -1,0 +1,9 @@
+# Send one acoustic command from this modem.
+# command: abort, abort_all, start_telemetry, stop_telemetry
+# target: modem id 001-255 for abort, start_telemetry, and stop_telemetry.
+# abort_all ignores target. An empty or zero target sends nothing.
+string command
+string target
+---
+bool success
+string message

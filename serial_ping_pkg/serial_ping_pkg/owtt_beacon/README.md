@@ -51,7 +51,7 @@ Decoded fields stay a Python dict. The surface unit does **not** invent a ROS
 `.msg` for them. It publishes JSON `std_msgs/String` for humans/Foxglove; the
 inference hop consumes the same object inside the MQTT range-report JSON.
 
-START/STOP/OK stay ASCII keywords (they are already tiny).
+START_TELEMETRY, STOP_TELEMETRY, abort, and OK are DCCL `Command` (id 126).
 
 Keep it small — the Succorfish NM3 caps a packet at **64 bytes** (timestamp
 envelope + DCCL + CRC-8). The beacon enforces this via
@@ -112,26 +112,26 @@ first N broadcasts even if `position` isn't a permanent field, then drop it —
 just enough to seed the inference node's branch lock before going silent on
 position (handy if the beacon surfaces for a GPS fix and then dives).
 
-**START/STOP command channel.** The beacon does **not** broadcast telemetry
+**Telemetry command channel.** The beacon does **not** broadcast telemetry
 until commanded (unless `autostart:=true`). It listens — even in transmitter
-mode the Teensy forwards received broadcasts to the host — for control
-broadcasts:
+mode the Teensy forwards received broadcasts to the host — for a DCCL
+`Command` addressed to its own modem id:
 
 
-| heard broadcast           | effect                       | ack            |
-| ------------------------- | ---------------------------- | -------------- |
-| `START` (`start_keyword`) | begin broadcasting telemetry | `OK` broadcast |
-| `STOP` (`stop_keyword`)   | stop broadcasting telemetry  | `OK` broadcast |
+| heard command                         | effect                       | ack                                      |
+| ------------------------------------- | ---------------------------- | ---------------------------------------- |
+| `START_TELEMETRY` with `dest` = this beacon | begin broadcasting telemetry | DCCL `OK` back to the commander (`$B`) |
+| `STOP_TELEMETRY` with `dest` = this beacon  | stop broadcasting telemetry  | DCCL `OK` back to the commander (`$B`) |
 
 
-The ack is **idempotent**: the beacon replies `OK` to *every* valid `START`/`STOP`,
-even when its state doesn't change (a `START` while already broadcasting still
-acks). This makes the command channel safe to retry — the surface units /
-inference service re-send until they hear an `OK`. By default any sender is
-accepted; restrict with `commander_modem_ids:="['067','069']"`. The ack is a
-plain `$B<nn>OK` broadcast sent immediately (not on the PPS schedule). After a
-`STOP`, the Teensy's stored telemetry ages out within a few epochs, so a few
-residual broadcasts may still go out before it falls silent.
+A command whose `dest` is some other modem is ignored, so one start does not
+turn on every beacon in range. The ack is **idempotent**: the beacon replies
+`OK` to every valid command, even when its state doesn't change. The surface
+units / inference service re-send until they hear an `OK`. By default any
+sender is accepted; restrict with `commander_modem_ids:="['067','069']"`.
+The ack goes out immediately (not on the PPS schedule). After a stop, the
+Teensy's stored telemetry ages out within a few epochs, so a few residual
+broadcasts may still go out before it falls silent.
 
 ### `owtt_surface_unit_node` (surface unit / receiver)
 
@@ -306,7 +306,6 @@ overridable as a launch argument.
 | `position_seed_count`                            | `0`                                                    | include GPS in first N broadcasts then drop it                       |
 | `autostart`                                      | `false`                                                | begin broadcasting without waiting for `START`                       |
 | `commander_modem_ids`                            | `[]`                                                   | modem ids allowed to command; `**[]` = anyone**                      |
-| `start_keyword` / `stop_keyword` / `ack_message` | `START` / `STOP` / `OK`                                | command channel words                                                |
 
 
 > The on-air cadence is `broadcast_interval_s` (PPS-locked, set on the Teensy);
@@ -333,8 +332,7 @@ overridable as a launch argument.
 | `commander`                                      | `false`                                                | **exactly one** unit `true`: only it transmits acoustic START/STOP            |
 | `beacon_name`                                    | `lolo`                                                 | beacon being tracked                                                          |
 | `codec`                                          | `dccl`                                                 | `dccl` or `ascii`; **must match the beacon**                                  |
-| `beacon_modem_id`                                | `101`                                                  | only accept this beacon's frames; empty = any                                 |
-| `start_keyword` / `stop_keyword` / `ack_message` | `START` / `STOP` / `OK`                                | command words (must match the beacon)                                         |
+| `beacon_modem_id`                                | `101`                                                  | beacon address for telemetry commands and frames; empty accepts any telemetry |
 | `mqtt_enabled`                                   | `true`                                                 | publish range reports to MQTT                                                 |
 | `mqtt_host` / `mqtt_port`                        | `20.240.40.232` / `1884`                               | broker                                                                        |
 | `mqtt_username` / `mqtt_password`                | `/`                                                    | broker auth (optional)                                                        |
