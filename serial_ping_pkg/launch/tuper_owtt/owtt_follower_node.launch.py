@@ -15,10 +15,7 @@ not a launch argument.
 import launch
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.launch_description_sources import (
-    FrontendLaunchDescriptionSource,
-    PythonLaunchDescriptionSource,
-)
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     IfElseSubstitution,
     LaunchConfiguration,
@@ -154,18 +151,5 @@ def generate_launch_description():
                     LaunchConfiguration('command_terminator'), value_type=str),
                 'teensy.ignore_pps_after_s': LaunchConfiguration('ignore_pps_after_s'),
             }],
-        ),
-        IncludeLaunchDescription(
-            FrontendLaunchDescriptionSource([
-                PathJoinSubstitution([
-                    FindPackageShare('serial_ping_pkg'),
-                    'launch',
-                    'acoustic_cmd.launch',
-                ]),
-            ]),
-            launch_arguments={
-                'robot_name': LaunchConfiguration('namespace'),
-                'own_modem_id': LaunchConfiguration('own_modem_id'),
-            }.items(),
         ),
     ])

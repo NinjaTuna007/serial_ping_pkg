@@ -90,10 +90,4 @@
         <param name="beacon.commander_modem_ids" value="$(var commander_modem_ids)"/>
     </node>
 
-    <include file="$(find-pkg-share serial_ping_pkg)/launch/acoustic_cmd.launch">
-        <arg name="robot_name" value="$(var robot_name)"/>
-        <arg name="own_modem_id" value="$(var own_modem_id)"/>
-        <arg name="handle_telemetry" value="true"/>
-        <arg name="telemetry_senders" value="$(var commander_modem_ids)"/>
-    </include>
 </launch>

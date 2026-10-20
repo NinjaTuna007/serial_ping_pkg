@@ -213,9 +213,18 @@ as unsynced and arrival time is used instead.
 
 ## Launch
 
+Acoustic send and receive is `acoustic_cmd.launch`, one process next to the
+driver. The beacon, surface, and ranging launches do not start it. The beacon's
+copy sets `handle_telemetry:=true` so `START_TELEMETRY` and `STOP_TELEMETRY`
+are published on `acoustic_telemetry`. A stick or LoLo copy leaves that flag
+false. `telemetry_senders` is the beacon's `commander_modem_ids` list; empty
+means anyone.
+
 ```bash
 # Beacon (on the beacon vehicle, e.g. lolo) — broadcast EVERYTHING, accept
 # commands from anyone, seed its GPS for the first 10 broadcasts, every 2 s.
+ros2 launch serial_ping_pkg acoustic_cmd.launch \
+    robot_name:=lolo own_modem_id:=007 handle_telemetry:=true
 ros2 launch serial_ping_pkg owtt_beacon_node.launch \
     beacon_name:=lolo own_modem_id:=007 \
     telemetry_fields:="['position','depth','svs','speed','bt']" \
@@ -255,6 +264,8 @@ the sim geometry. Put each node + its driver in the vehicle's namespace
 
 ```bash
 # Beacon on 'sam' — transmit depth (svs/latlon are silent while submerged)
+ros2 launch serial_ping_pkg acoustic_cmd.launch \
+    robot_name:=sam own_modem_id:=101 handle_telemetry:=true
 ros2 launch serial_ping_pkg owtt_beacon_node.launch \
     robot_name:=sam start_driver:=true driver_backend:=unity \
     own_modem_id:=101 unity_own_modem_id:=101 autostart:=true \

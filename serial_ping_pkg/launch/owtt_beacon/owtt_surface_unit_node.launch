@@ -94,8 +94,4 @@
         <param name="mqtt.qos" value="$(var mqtt_qos)"/>
     </node>
 
-    <include file="$(find-pkg-share serial_ping_pkg)/launch/acoustic_cmd.launch">
-        <arg name="robot_name" value="$(var robot_name)"/>
-        <arg name="own_modem_id" value="$(var own_modem_id)"/>
-    </include>
 </launch>

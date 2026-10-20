@@ -1,8 +1,8 @@
 """Listen for acoustic commands, and transmit them.
 
-Every ``serial_ping_pkg`` launch starts this node. It advertises
-``acoustic_abort`` and ``acoustic_command`` in its namespace, so a sourced
-workspace can call either service.
+Bringup starts this node once, in its own window, beside the driver.
+It advertises ``acoustic_abort`` and ``acoustic_command`` in that
+namespace. Ranging and beacon launches do not start a second copy.
 
 Targeted ``ABORT`` publishes ``std_msgs/Empty`` on the SMARC abort topic and
 answers with a DCCL ``OK``. The service waits for that ``OK`` and sends the

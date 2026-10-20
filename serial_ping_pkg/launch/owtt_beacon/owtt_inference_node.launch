@@ -72,11 +72,4 @@
         <param name="inference.command_timeout_s" value="$(var command_timeout_s)"/>
         <param name="inference.command_repeat_s" value="$(var command_repeat_s)"/>
     </node>
-
-    <arg name="robot_name" default="" description="Namespace shared with the driver"/>
-    <arg name="own_modem_id" default="" description="This modem. Empty refuses to send or act on acoustic commands."/>
-    <include file="$(find-pkg-share serial_ping_pkg)/launch/acoustic_cmd.launch">
-        <arg name="robot_name" value="$(var robot_name)"/>
-        <arg name="own_modem_id" value="$(var own_modem_id)"/>
-    </include>
 </launch>

@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
 <launch>
-    <!-- Same namespace as the driver and the vehicle. Relative smarc/abort
-         becomes /<robot_name>/smarc/abort. -->
+    <!-- One process per modem, started by bringup next to the driver.
+         Relative smarc/abort becomes /<robot_name>/smarc/abort.
+         A beacon sets handle_telemetry true; a stick or LoLo leaves it false. -->
     <arg name="robot_name" default="lolo" description="Namespace shared with the driver"/>
     <arg name="own_modem_id" default="007" description="This modem. Panic from here does not abort it."/>
     <arg name="abort_topic" default="smarc/abort" description="SMARC abort topic (std_msgs/Empty), relative to robot_name"/>

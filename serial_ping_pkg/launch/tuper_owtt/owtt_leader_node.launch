@@ -59,8 +59,4 @@
         <param name="teensy.command_terminator" type="str" value="$(var command_terminator)"/>
     </node>
 
-    <include file="$(find-pkg-share serial_ping_pkg)/launch/acoustic_cmd.launch">
-        <arg name="robot_name" value="$(var namespace)"/>
-        <arg name="own_modem_id" value="$(var own_modem_id)"/>
-    </include>
 </launch>
