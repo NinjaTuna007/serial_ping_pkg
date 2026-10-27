@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- One process for the whole fleet. Subscribes to every stick's
+         sensor/acoustic and writes the vehicle's position, depth, and speed
+         while that vehicle's heartbeat is stale. -->
+    <arg name="mqtt_host" default="20.240.40.232"/>
+    <arg name="mqtt_port" default="1884"/>
+    <arg name="beacon_name" default="lolo"/>
+    <arg name="beacon_modem_id" default="007"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="owtt_vehicle_relay"
+          name="owtt_vehicle_relay"
+          output="screen">
+        <param name="mqtt.host" type="str" value="$(var mqtt_host)"/>
+        <param name="mqtt.port" value="$(var mqtt_port)"/>
+        <param name="beacon.name" type="str" value="$(var beacon_name)"/>
+        <param name="beacon.modem_id" type="str" value="$(var beacon_modem_id)"/>
+    </node>
+</launch>

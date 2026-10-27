@@ -186,6 +186,21 @@ tuper/owtt_beacon/<beacon>/cmd                        (publish: inference node �
 tuper/owtt_beacon/<beacon>/cmd_ack                    (publish: whichever unit heard the beacon OK)
 ```
 
+The same range is also published on the stick's WARA-PS agent as
+`waraps/sensor/acoustic` (one JSON document, a contact per underwater
+agent). The stick bridge forwards it to
+`<context>/unit/surface/real/<user>_<stick>/sensor/acoustic`. Inference
+subscribes to `+/unit/surface/+/+/sensor/acoustic` as well as the legacy
+range topics. `owtt_vehicle_relay` is the single writer that copies a
+contact's lat, lon, depth, and speed onto that vehicle's sensor topics
+while the vehicle heartbeat is stale.
+
+Acoustic commands for the broker are action servers (`acoustic_abort`,
+`acoustic_abort_all`, `acoustic_start_telemetry`, `acoustic_stop_telemetry`,
+`acoustic_enough`) from `acoustic_actions.launch`. The goal JSON is
+`{"target": "lolo"}`. `stick_bringup.sh` starts those, plus `wasp_bt`, by
+default. `ENABLE_WARAPS_COMMANDS=false` keeps the level-1 sensor agent.
+
 The subscribe `+` wildcard means the inference node automatically picks up
 **every** surface unit that publishes — add more units (each with a distinct
 `unit_name`) and they show up with no config change. Range report payload:
@@ -229,7 +244,7 @@ ros2 launch serial_ping_pkg owtt_beacon_node.launch \
     beacon_name:=lolo own_modem_id:=007 \
     telemetry_fields:="['position','depth','svs','speed','bt']" \
     position_seed_count:=0 \
-    send_period_s:=1.0 broadcast_interval_s:=1 \
+    send_period_s:=0.2 broadcast_interval_s:=5 \
     commander_modem_ids:="[]"
 
 
@@ -302,7 +317,7 @@ overridable as a launch argument.
 | ------------------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------- |
 | `own_modem_id`                                   | `101`                                                  | beacon's own modem address (`$Y`)                                    |
 | `listen_for_modem_id`                            | `000`                                                  | modem id to wait for before TX; `000` = go first                     |
-| `broadcast_interval_s`                           | `1`                                                    | Teensy on-air cadence as a PPS multiple (1..4)                       |
+| `broadcast_interval_s`                           | `5`                                                    | Teensy on-air cadence in PPS epochs (firmware accepts 1..3600)       |
 | `mode`                                           | `transmitter`                                          | `transmitter`                                                        |
 | `beacon_name`                                    | `lolo`                                                 | telemetry-source namespace                                           |
 | `telemetry_fields`                               | `position`, `depth`, `svs`, `speed`, `bt`              | subset of those five; position stays in every packet                 |
@@ -316,16 +331,17 @@ overridable as a launch argument.
 | `position_precision`                             | `7`                                                    | lat/lon decimals in **ascii** payloads (`ascii_on_air.LATLON_DECIMALS`; DCCL uses proto 7 dp) |
 | `max_bt_len`                                     | `32`                                                   | bt text cap (DCCL proto `max_length` is 16)                          |
 | `max_onair_bytes`                                | `64`                                                   | modem packet cap; encoded payload auto-trimmed to fit                |
-| `send_period_s`                                  | `1.0`                                                  | **telemetry broadcast interval** (how often `$K` is pushed)          |
+| `send_period_s`                                  | `0.2`                                                  | how often the host pushes a fresh `$K` to the Teensy                 |
 | `position_seed_count`                            | `0`                                                    | extra GPS bursts only when `position` is not already in the field list |
 | `autostart`                                      | `false`                                                | begin broadcasting without waiting for `START`                       |
 | `commander_modem_ids`                            | `[]`                                                   | modem ids allowed to command; `**[]` = anyone**                      |
 
 
-> The on-air cadence is `broadcast_interval_s` (PPS-locked, set on the Teensy);
-> `send_period_s` is how often the host refreshes the payload it hands the
-> Teensy. Keep `send_period_s` ≤ the on-air interval so each broadcast carries
-> fresh data.
+> The on-air cadence is `broadcast_interval_s` (PPS-locked, set on the Teensy).
+> `send_period_s` is how often the host pushes a new `$K` over the cable. The
+> Teensy drops a stored packet one PPS epoch after it arrived, so the host
+> push stays faster than that epoch. The packet that goes on the air is the
+> one pushed in the last fraction of a second, not the one from the previous slot.
 
 ### `owtt_surface_unit_node.launch` arguments
 

@@ -69,6 +69,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from serial_ping_pkg.utils import load_yaml_config
+from serial_ping_pkg.owtt_beacon.acoustic_sensor import expand_mqtt_reports
 from serial_ping_pkg.owtt_beacon.mqtt_helper import MqttClient
 
 _EARTH_RADIUS_M = 6378137.0
@@ -160,6 +161,9 @@ class InferenceNode(Node):
         self.declare_parameter('mqtt.username', mqtt_cfg.get('username', ''))
         self.declare_parameter('mqtt.password', mqtt_cfg.get('password', ''))
         self.declare_parameter('mqtt.topic_prefix', mqtt_cfg.get('topic_prefix', 'owtt_beacon'))
+        self.declare_parameter(
+            'mqtt.acoustic_topic',
+            mqtt_cfg.get('acoustic_topic', '+/unit/surface/+/+/sensor/acoustic'))
 
         self.declare_parameter('inference.update_period_s', inf_cfg.get('update_period_s', 1.0))
         # How often to (re)publish the estimate. Faster than update_period_s so the
@@ -214,6 +218,7 @@ class InferenceNode(Node):
         self.mqtt_username = self.get_parameter('mqtt.username').get_parameter_value().string_value
         self.mqtt_password = self.get_parameter('mqtt.password').get_parameter_value().string_value
         self.mqtt_topic_prefix = self.get_parameter('mqtt.topic_prefix').get_parameter_value().string_value
+        self.mqtt_acoustic_topic = self.get_parameter('mqtt.acoustic_topic').get_parameter_value().string_value
         self.update_period_s = self.get_parameter('inference.update_period_s').get_parameter_value().double_value
         self.publish_period_s = self.get_parameter('inference.publish_period_s').get_parameter_value().double_value
         self.freshness_window_s = self.get_parameter('inference.freshness_window_s').get_parameter_value().double_value
@@ -290,6 +295,7 @@ class InferenceNode(Node):
             client_id="owtt_inference", logger=self.get_logger())
         self.mqtt.set_message_handler(self._on_mqtt)
         self.mqtt.add_subscription(self.sub_topic)
+        self.mqtt.add_subscription(self.mqtt_acoustic_topic)
         self.mqtt.add_subscription(self.cmd_ack_topic, qos=1)
         self.mqtt.start()
 
@@ -326,16 +332,17 @@ class InferenceNode(Node):
         if topic.endswith('/cmd_ack'):
             self._on_cmd_ack(payload)
             return
-        try:
-            report = json.loads(payload)
-        except ValueError:
+        reports = expand_mqtt_reports(topic, payload, self.beacon_name)
+        if reports is None:
             self.get_logger().warn(f"Bad MQTT payload on {topic}", throttle_duration_sec=5.0)
             return
-        unit = report.get('surface_unit') or topic.rsplit('/', 1)[-1]
-        report['recv_time'] = time.time()
-        report['meas_time'] = self._measurement_time(report, unit)
+        now = time.time()
         with self._lock:
-            self._reports[unit] = report
+            for report in reports:
+                unit = report.get('surface_unit') or topic.rsplit('/', 1)[-1]
+                report['recv_time'] = now
+                report['meas_time'] = self._measurement_time(report, unit)
+                self._reports[unit] = report
 
     def _measurement_time(self, report, unit):
         """Epoch (s, this host's clock) at which the range was actually measured.

@@ -21,7 +21,7 @@ teensy:
   mode: "receiver"              # receiver | transmitter | wire
   own_modem_id: "067"           # this node's own modem address
   listen_for_modem_id: "000"    # transmitter-only: "000" = go first
-  broadcast_interval_s: 1       # transmitter-only: PPS multiple (1..4)
+  broadcast_interval_s: 5       # transmitter-only: on-air cadence in PPS epochs (1..3600)
   command_terminator: "\r\n"
 
 # One-way-travel-time -> range conversion (surface-unit side).
@@ -63,7 +63,7 @@ beacon:
   position_precision: 7         # DCCL lat/lon precision is set in proto/dccl_acoustic.proto
   max_bt_len: 32                # cap bt text length (acoustic bandwidth)
   max_onair_bytes: 64           # Succorfish NM3 packet cap; encoded payload is trimmed to fit
-  send_period_s: 1.0            # how often the beacon pushes telemetry to the Teensy
+  send_period_s: 0.2            # host $K refresh. Teensy drops a stored packet after 1 PPS epoch, so this stays well under that.
   position_seed_count: 0        # extra GPS broadcasts before dropping it; 0 because position is permanent
   # DCCL START_TELEMETRY / STOP_TELEMETRY addressed to this beacon's modem.
   # A command for another modem is ignored. Each accepted command is acked
@@ -87,8 +87,17 @@ mqtt:
   keepalive: 30
   username: ""
   password: ""
-  topic_prefix: "tuper/owtt_beacon"   # report topic: <prefix>/<beacon>/range/<unit>
+  topic_prefix: "tuper/owtt_beacon"   # legacy report topic: <prefix>/<beacon>/range/<unit>
+  # Stick WARA-PS sensor. The bridge forwards waraps/sensor/acoustic here.
+  acoustic_topic: "+/unit/surface/+/+/sensor/acoustic"
+  heartbeat_topic: "+/unit/+/+/+/heartbeat"
   qos: 0
+
+# Underwater agents besides the beacon row. beacon.name / beacon.modem_id
+# overwrite the entry of that name, so a launch arg still retargets it.
+# A further vehicle is another block: modem_id, domain, and the commands
+# that stick is allowed to send it.
+agents: {}
 
 # Inference node (triangulation / multilateration).
 inference:

@@ -35,6 +35,12 @@ from serial_ping_pkg.utils import load_yaml_config
 from serial_ping_pkg.tuper_owtt import teensy_interface as ti
 from serial_ping_pkg.tuper_owtt.owtt_base import WireSafeSerialNode, run_node
 from serial_ping_pkg.owtt_beacon import beacon_telemetry as bt_codec
+from serial_ping_pkg.owtt_beacon.acoustic_sensor import (
+    ACOUSTIC_TOPIC,
+    acoustic_document,
+    make_contact,
+)
+from serial_ping_pkg.owtt_beacon.agent_map import build_agent_tables
 from serial_ping_pkg.owtt_beacon.mqtt_helper import MqttClient
 from serial_ping_pkg.common.acoustic_command import (
     air_command_code,
@@ -134,6 +140,9 @@ class SurfaceUnitNode(WireSafeSerialNode):
             f"Telemetry codec: {self.telemetry_codec} (DCCL+CRC-8)")
         beacon_modem_raw = self.get_parameter('beacon.modem_id').value
         self.beacon_modem_id = ti.normalize_modem_id(beacon_modem_raw) if beacon_modem_raw not in (None, '') else ''
+        self._agents_by_name, self._agents_by_modem = build_agent_tables(
+            config, self.beacon_name, self.beacon_modem_id)
+        self._acoustic_contacts = {}
         self._cmd_seq = 0
 
         self.mqtt_enabled = self.get_parameter('mqtt.enabled').get_parameter_value().bool_value
@@ -186,6 +195,10 @@ class SurfaceUnitNode(WireSafeSerialNode):
         # bags / Foxglove on the surface vehicle.
         self.report_pub = self.create_publisher(
             String, f"/{self.unit_name}/owtt_beacon/range_report", 10)
+        # Relative, so it lands on /<robot>/waraps/sensor/acoustic next to the
+        # bridge. One document lists every agent this stick has heard.
+        self.acoustic_pub = self.create_publisher(String, ACOUSTIC_TOPIC, 10)
+        self._range_pubs = {self.beacon_name: self.range_pub}
 
         # --- subscriptions ---
         self.create_subscription(GeoPoint, self.unit_latlon_topic, self._unit_latlon_cb, 10)
@@ -342,15 +355,13 @@ class SurfaceUnitNode(WireSafeSerialNode):
             modem_id, payload_data = broadcast
             cmd = unpack_command(payload_data)
             if cmd is not None:
-                from_beacon = (
-                    not self.beacon_modem_id or modem_id == self.beacon_modem_id)
-                if is_beacon_ok(cmd, modem_id) and from_beacon:
+                if is_beacon_ok(cmd, modem_id) and self._accepts_modem(modem_id):
                     self._on_beacon_ack(modem_id)
                 return
             telem_payload = payload_data
-            if self.beacon_modem_id and modem_id != self.beacon_modem_id:
+            if not self._accepts_modem(modem_id):
                 self.get_logger().debug(
-                    f"Telemetry from modem {modem_id} != beacon {self.beacon_modem_id}; ignoring.")
+                    f"Telemetry from modem {modem_id} is not in the agent map; ignoring.")
                 self.pending = None
                 return
             telemetry = bt_codec.decode_telemetry(
@@ -426,24 +437,40 @@ class SurfaceUnitNode(WireSafeSerialNode):
             self.pending = None
             return
 
+        agent = self._agent_for(modem_id)
+        beacon_label = agent.name if agent is not None else self.beacon_name
         range_msg = Float32()
         range_msg.data = float(rng)
-        self.range_pub.publish(range_msg)
+        self._range_publisher(beacon_label).publish(range_msg)
+
+        telem = self._jsonable_telemetry(self.pending['telemetry'])
+        stamp = time.time()
+        unit_lat = self.unit_position[0] if self.unit_position else None
+        unit_lon = self.unit_position[1] if self.unit_position else None
+        contact = make_contact(
+            self.unit_name, beacon_label, self.pending['modem_id'], stamp,
+            unit_lat, unit_lon, float(rng), float(delta_us), float(offset_us),
+            float(c), telem)
+        self._acoustic_contacts[beacon_label] = contact
+        acoustic_msg = String()
+        acoustic_msg.data = json.dumps(acoustic_document(self._acoustic_contacts.values()))
+        if getattr(self, 'acoustic_pub', None) is not None:
+            self.acoustic_pub.publish(acoustic_msg)
 
         report = {
             'surface_unit': self.unit_name,
-            'beacon': self.beacon_name,
+            'beacon': beacon_label,
             'beacon_modem_id': self.pending['modem_id'],
-            'stamp': time.time(),
-            'unit_lat': self.unit_position[0] if self.unit_position else None,
-            'unit_lon': self.unit_position[1] if self.unit_position else None,
+            'stamp': stamp,
+            'unit_lat': unit_lat,
+            'unit_lon': unit_lon,
             'range_m': float(rng),
             'delta_us': float(delta_us),
             'offset_us': float(offset_us),
             'offset_src': offset_src,
             'sound_velocity': float(c),
             'sound_velocity_src': c_src,
-            'telemetry': self._jsonable_telemetry(self.pending['telemetry']),
+            'telemetry': telem,
         }
         report_json = json.dumps(report)
 
@@ -452,17 +479,41 @@ class SurfaceUnitNode(WireSafeSerialNode):
         self.report_pub.publish(report_msg)
 
         if self.mqtt is not None:
-            self.mqtt.publish(self.report_topic, report_json, qos=self.mqtt_qos)
+            topic = f"{self.mqtt_topic_prefix}/{beacon_label}/range/{self.unit_name}"
+            self.mqtt.publish(topic, report_json, qos=self.mqtt_qos)
 
         if self.unit_position is None:
             self.get_logger().warn(
                 f"range={rng:.2f} m but own position unknown ({self.unit_latlon_topic} "
                 "not received yet); report has null position.", throttle_duration_sec=5.0)
         self.get_logger().info(
-            f"[{self.unit_name}] beacon '{self.beacon_name}' delta={delta_us} us, "
+            f"[{self.unit_name}] beacon '{beacon_label}' delta={delta_us} us, "
             f"offset={offset_us:.0f} us ({offset_src}), c={c:.1f} m/s ({c_src}) "
             f"-> range={rng:.2f} m")
         self.pending = None
+
+    def _accepts_modem(self, modem_id):
+        table = getattr(self, '_agents_by_modem', None)
+        if table:
+            return ti.normalize_modem_id(modem_id) in table
+        if not self.beacon_modem_id:
+            return True
+        return modem_id == self.beacon_modem_id
+
+    def _agent_for(self, modem_id):
+        table = getattr(self, '_agents_by_modem', None) or {}
+        return table.get(ti.normalize_modem_id(modem_id))
+
+    def _range_publisher(self, beacon_label):
+        pubs = getattr(self, '_range_pubs', None)
+        if pubs is None:
+            return self.range_pub
+        pub = pubs.get(beacon_label)
+        if pub is None:
+            pub = self.create_publisher(
+                Float32, f"/{self.unit_name}/owtt_beacon/{beacon_label}/range", 10)
+            pubs[beacon_label] = pub
+        return pub
 
     def _resolve_offset(self, modem_id, delta_us, c, telemetry):
         """Return (offset_us, source) for this modem pair.

@@ -56,6 +56,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from serial_ping_pkg.utils import load_yaml_config
+from serial_ping_pkg.owtt_beacon.acoustic_sensor import expand_mqtt_reports
 from serial_ping_pkg.owtt_beacon.mqtt_helper import MqttClient
 from serial_ping_pkg.owtt_beacon.inference_node import (
     geodetic_to_enu, enu_to_geodetic, circle_intersections)
@@ -120,6 +121,9 @@ class SmootherInferenceNode(Node):
         self.declare_parameter('mqtt.username', mqtt_cfg.get('username', ''))
         self.declare_parameter('mqtt.password', mqtt_cfg.get('password', ''))
         self.declare_parameter('mqtt.topic_prefix', mqtt_cfg.get('topic_prefix', 'owtt_beacon'))
+        self.declare_parameter(
+            'mqtt.acoustic_topic',
+            mqtt_cfg.get('acoustic_topic', '+/unit/surface/+/+/sensor/acoustic'))
 
         # Shared model knobs (kept identical to inference_node for parity).
         self.declare_parameter('inference.update_period_s', inf_cfg.get('update_period_s', 1.0))
@@ -159,6 +163,7 @@ class SmootherInferenceNode(Node):
         self.mqtt_username = self.get_parameter('mqtt.username').get_parameter_value().string_value
         self.mqtt_password = self.get_parameter('mqtt.password').get_parameter_value().string_value
         self.mqtt_topic_prefix = self.get_parameter('mqtt.topic_prefix').get_parameter_value().string_value
+        self.mqtt_acoustic_topic = self.get_parameter('mqtt.acoustic_topic').get_parameter_value().string_value
         self.update_period_s = self.get_parameter('inference.update_period_s').get_parameter_value().double_value
         self.publish_period_s = self.get_parameter('inference.publish_period_s').get_parameter_value().double_value
         self.freshness_window_s = self.get_parameter('inference.freshness_window_s').get_parameter_value().double_value
@@ -229,6 +234,7 @@ class SmootherInferenceNode(Node):
             client_id="owtt_inference_smoother", logger=self.get_logger())
         self.mqtt.set_message_handler(self._on_mqtt)
         self.mqtt.add_subscription(self.sub_topic)
+        self.mqtt.add_subscription(self.mqtt_acoustic_topic)
         self.mqtt.add_subscription(self.cmd_ack_topic, qos=1)
         self.mqtt.start()
 
@@ -258,20 +264,21 @@ class SmootherInferenceNode(Node):
         if topic.endswith('/cmd_ack'):
             self._on_cmd_ack(payload)
             return
-        try:
-            report = json.loads(payload)
-        except ValueError:
+        reports = expand_mqtt_reports(topic, payload, self.beacon_name)
+        if reports is None:
             self.get_logger().warn(f"Bad MQTT payload on {topic}", throttle_duration_sec=5.0)
             return
-        unit = report.get('surface_unit') or topic.rsplit('/', 1)[-1]
-        report['surface_unit'] = unit
-        report['recv_time'] = time.time()
-        report['meas_time'] = self._measurement_time(report, unit)
+        now = time.time()
         with self._lock:
-            self._latest[unit] = report
-            if report.get('range_m') is not None and report.get('unit_lat') is not None \
-                    and report.get('unit_lon') is not None:
-                self._pending.append(report)
+            for report in reports:
+                unit = report.get('surface_unit') or topic.rsplit('/', 1)[-1]
+                report['surface_unit'] = unit
+                report['recv_time'] = now
+                report['meas_time'] = self._measurement_time(report, unit)
+                self._latest[unit] = report
+                if report.get('range_m') is not None and report.get('unit_lat') is not None \
+                        and report.get('unit_lon') is not None:
+                    self._pending.append(report)
 
     def _measurement_time(self, report, unit):
         """Epoch (s, this host's clock) at which the range was measured.

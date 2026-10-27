@@ -68,6 +68,8 @@ setup(
             'owtt_inference_smoother_node = serial_ping_pkg.owtt_beacon.inference_smoother_node:main',
             'owtt_fake_mqtt = serial_ping_pkg.owtt_beacon.fake_mqtt_publisher:main',
             'acoustic_cmd_node = serial_ping_pkg.common.acoustic_cmd_node:main',
+            'acoustic_action_node = serial_ping_pkg.owtt_beacon.acoustic_action_node:main',
+            'owtt_vehicle_relay = serial_ping_pkg.owtt_beacon.vehicle_relay_node:main',
             'ping_estimator_action_node = serial_ping_pkg.ping_estimator_action.ping_estimator_action_node:main',
             'ping_estimator_action_cmd = serial_ping_pkg.ping_estimator_action.ping_estimator_action_cmd:main',
         ],

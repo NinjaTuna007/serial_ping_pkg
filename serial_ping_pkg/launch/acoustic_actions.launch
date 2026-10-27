@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- WARA-PS acoustic tasks for one stick. Run beside acoustic_cmd, in the
+         same robot namespace. wasp_bt on that stick is what turns these
+         action servers into tasks-available. -->
+    <arg name="robot_name" default="stick_1"/>
+    <arg name="beacon_name" default="lolo"/>
+    <arg name="beacon_modem_id" default="007"/>
+
+    <node pkg="serial_ping_pkg"
+          exec="acoustic_action_node"
+          name="acoustic_action_node"
+          output="screen"
+          namespace="$(var robot_name)">
+        <param name="beacon.name" type="str" value="$(var beacon_name)"/>
+        <param name="beacon.modem_id" type="str" value="$(var beacon_modem_id)"/>
+    </node>
+</launch>

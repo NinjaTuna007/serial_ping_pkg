@@ -28,7 +28,7 @@
     <!-- Teensy transmitter config -->
     <arg name="own_modem_id" default="101" description="Beacon's own modem address (for $Y)"/>
     <arg name="listen_for_modem_id" default="000" description="Modem id to wait for; 000 = go first"/>
-    <arg name="broadcast_interval_s" default="1" description="Broadcast cadence as a PPS multiple (1..4)"/>
+    <arg name="broadcast_interval_s" default="5" description="On-air cadence in PPS epochs. Firmware accepts 1..3600."/>
     <arg name="mode" default="transmitter" description="transmitter | wire"/>
     <arg name="command_terminator" default="&#13;&#10;" description="Terminator appended to Teensy commands"/>
 
@@ -50,7 +50,7 @@
     <arg name="position_precision" default="7" description="Decimal places for lat/lon in the payload (on_air.LATLON_DECIMALS)"/>
     <arg name="max_bt_len" default="32" description="Cap on bt text length (acoustic bandwidth)"/>
     <arg name="max_onair_bytes" default="64" description="Modem packet cap; encoded payload is trimmed to fit"/>
-    <arg name="send_period_s" default="1.0" description="How often telemetry is pushed to the Teensy"/>
+    <arg name="send_period_s" default="0.2" description="How often the host pushes a fresh $K to the Teensy. Faster than the 1-epoch payload lifetime so the on-air slot carries current data."/>
     <arg name="position_seed_count" default="0" description="Extra GPS broadcasts when position is not a permanent field. 0 keeps the field list as written."/>
 
     <!-- Broadcast START/STOP command channel -->
