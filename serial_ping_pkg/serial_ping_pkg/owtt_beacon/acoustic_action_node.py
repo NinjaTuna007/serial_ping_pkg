@@ -22,6 +22,7 @@ VERBS = (
     ('acoustic_start_telemetry', 'start_telemetry'),
     ('acoustic_stop_telemetry', 'stop_telemetry'),
     ('acoustic_enough', 'enough'),
+    ('acoustic_enough_task', 'enough_task'),
 )
 
 HEALTH_READY = 0

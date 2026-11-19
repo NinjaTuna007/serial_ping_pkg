@@ -14,6 +14,8 @@ CRC-8 lives in ``dccl_codec``; a frame that fails it never becomes a dict.
   Panic does not get an ack. ``dest`` is whoever sent the command.
 * ``6`` ENOUGH — act only when ``dest`` is this modem and ``confirm`` is 0.
   Clears the current WARAPS mission. It does not raise the emergency flag.
+* ``7`` ENOUGH_TASK — same address rules. Enoughs only the task the
+  vehicle is running. The rest of the queue stays.
 
 Modem ``000`` is not a wildcard. A missing or zero target is not a panic.
 """
@@ -27,6 +29,7 @@ CODE_START_TELEMETRY = 3
 CODE_STOP_TELEMETRY = 4
 CODE_OK = 5
 CODE_ENOUGH = 6
+CODE_ENOUGH_TASK = 7
 
 CONFIRM_ALL = 0xA11
 
@@ -37,6 +40,7 @@ CODE_NAMES = {
     CODE_STOP_TELEMETRY: 'STOP_TELEMETRY',
     CODE_OK: 'OK',
     CODE_ENOUGH: 'ENOUGH',
+    CODE_ENOUGH_TASK: 'ENOUGH_TASK',
 }
 
 
@@ -59,6 +63,7 @@ COMMAND_WORDS = {
     'start_telemetry': CODE_START_TELEMETRY,
     'stop_telemetry': CODE_STOP_TELEMETRY,
     'enough': CODE_ENOUGH,
+    'enough_task': CODE_ENOUGH_TASK,
 }
 
 
@@ -66,7 +71,8 @@ def air_command_code(name):
     """MQTT / Foxglove verb to the DCCL code the commander puts on the air.
 
     ``START`` and ``STOP`` gate beacon telemetry. ``ABORT`` is the emergency
-    abort. ``ENOUGH`` clears the WARAPS queue. Unknown words return ``None``.
+    abort. ``ENOUGH`` clears the WARAPS queue. ``ENOUGH_TASK`` enoughs
+    only the running task. Unknown words return ``None``.
     """
     key = '' if name is None else str(name).strip().upper()
     return {
@@ -74,6 +80,7 @@ def air_command_code(name):
         'STOP': CODE_STOP_TELEMETRY,
         'ABORT': CODE_ABORT,
         'ENOUGH': CODE_ENOUGH,
+        'ENOUGH_TASK': CODE_ENOUGH_TASK,
     }.get(key)
 
 
@@ -205,6 +212,49 @@ def enough_tst_body(unit_name):
         'signal': '$enough',
         'unit': f'/{name}',
         'command': 'signal-unit',
+        'sender': 'acoustic',
+    }
+
+
+def enough_task_applies(cmd, own_id):
+    """True when this vehicle should enough only the task it is running."""
+    own = modem_int(own_id)
+    if own is None or cmd is None:
+        return False
+    return (cmd['code'] == CODE_ENOUGH_TASK and cmd['confirm'] == 0
+            and cmd['dest'] == own)
+
+
+def current_task_uuid(payload):
+    """First ``task-uuid`` in a WARA-PS executing-tasks document.
+
+    The task handler publishes that list with the running task first.
+    """
+    import json
+    try:
+        data = json.loads(payload)
+    except (TypeError, ValueError):
+        return None
+    tasks = data
+    if isinstance(data, dict):
+        tasks = data.get('tasks-executing', data.get('tasks_executing'))
+    if not isinstance(tasks, list) or not tasks:
+        return None
+    first = tasks[0]
+    if not isinstance(first, dict):
+        return None
+    task_uuid = first.get('task-uuid')
+    if not task_uuid:
+        return None
+    return str(task_uuid)
+
+
+def enough_task_exec_body(task_uuid):
+    """``signal-task`` ``$enough`` for one task. The rest of the queue stays."""
+    return {
+        'command': 'signal-task',
+        'signal': '$enough',
+        'task-uuid': str(task_uuid),
         'sender': 'acoustic',
     }
 

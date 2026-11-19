@@ -15,6 +15,7 @@ DEFAULT_COMMANDS = (
     'start_telemetry',
     'stop_telemetry',
     'enough',
+    'enough_task',
 )
 
 

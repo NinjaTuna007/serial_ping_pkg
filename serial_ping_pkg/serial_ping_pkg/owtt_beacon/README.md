@@ -197,7 +197,10 @@ while the vehicle heartbeat is stale.
 
 Acoustic commands for the broker are action servers (`acoustic_abort`,
 `acoustic_abort_all`, `acoustic_start_telemetry`, `acoustic_stop_telemetry`,
-`acoustic_enough`) from `acoustic_actions.launch`. The goal JSON is
+`acoustic_enough`, `acoustic_enough_task`) from `acoustic_actions.launch`.
+`acoustic_enough` drops the vehicle's whole WARA-PS queue.
+`acoustic_enough_task` enoughs only the task that vehicle is running.
+The goal JSON is
 `{"target": "lolo"}`. `stick_bringup.sh` starts those, plus `wasp_bt`, by
 default. `ENABLE_WARAPS_COMMANDS=false` keeps the level-1 sensor agent.
 

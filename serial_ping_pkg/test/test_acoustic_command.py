@@ -9,6 +9,7 @@ from serial_ping_pkg.common.acoustic_command import (
     CODE_ABORT,
     CODE_ABORT_ALL,
     CODE_ENOUGH,
+    CODE_ENOUGH_TASK,
     CODE_OK,
     CODE_START_TELEMETRY,
     CODE_STOP_TELEMETRY,
@@ -16,7 +17,10 @@ from serial_ping_pkg.common.acoustic_command import (
     abort_applies,
     ack_matches,
     beacon_verb,
+    current_task_uuid,
     enough_applies,
+    enough_task_applies,
+    enough_task_exec_body,
     enough_tst_body,
     pack_command,
     parse_command,
@@ -142,6 +146,31 @@ def test_enough_is_addressed_and_not_an_abort():
     assert 'task-uuid' not in body and 'tst-uuid' not in body
     assert parse_command('enough') == CODE_ENOUGH
     assert parse_command('ENOUGH') == CODE_ENOUGH
+
+
+def test_enough_task_targets_only_the_running_task():
+    blob = pack_command(CODE_ENOUGH_TASK, dest=7, sender=67, seq=8)
+    cmd = unpack_command(blob)
+    assert cmd['code'] == CODE_ENOUGH_TASK
+    assert enough_task_applies(cmd, 7)
+    assert not enough_task_applies(cmd, 5)
+    assert not enough_applies(cmd, 7)
+    tasks = (
+        '[{"task-uuid": "one", "status": "running"},'
+        '{"task-uuid": "two", "status": "started"}]'
+    )
+    assert current_task_uuid(tasks) == 'one'
+    assert current_task_uuid('[]') is None
+    assert current_task_uuid('not-json') is None
+    body = enough_task_exec_body('one')
+    assert body == {
+        'command': 'signal-task',
+        'signal': '$enough',
+        'task-uuid': 'one',
+        'sender': 'acoustic',
+    }
+    assert parse_command('enough_task') == CODE_ENOUGH_TASK
+    assert parse_command('enough-task') == CODE_ENOUGH_TASK
 
 
 def test_ack_matches_seq_and_sender():
@@ -455,6 +484,60 @@ def test_enough_publishes_tst_signal_and_acks():
     assert [task['status'] for task in handler.past_tasks] == ['enough', 'enough']
     assert handler.emergency_flag is False
     assert handler.aborted_flag is True
+
+
+@_skip
+@pytest.mark.skipif(exe('acoustic_cmd_node') is None, reason="node not built")
+def test_enough_task_signals_only_the_running_task():
+    """ENOUGH_TASK is signal-task $enough for the first executing task."""
+    import json
+
+    from std_msgs.msg import String
+
+    wasp = pytest.importorskip('wasp_bt.waraps.waraps_task_handler')
+
+    st = _start_cmd()
+    signals = st.probe.collect(String, '/waraps/exec/command')
+    pub = st.probe.node.create_publisher(String, '/waraps/sensor/executing_tasks', 10)
+    listed = String()
+    listed.data = json.dumps([
+        {'task-uuid': 'one', 'status': 'running'},
+        {'task-uuid': 'two', 'status': 'started'},
+    ])
+    handler = wasp.WaraPSTaskHandler(st.probe.node, {
+        'name': 'lolo',
+        'levels': ['direct_execution'],
+        'agent-uuid': 'test-agent',
+        'pulse_rate': 1.0,
+    })
+    handler.tasks_executing = [
+        {'task-uuid': 'one', 'status': 'running', 'task': {'name': 'move-to'}},
+        {'task-uuid': 'two', 'status': 'started', 'task': {'name': 'move-to'}},
+    ]
+    st.probe.node.destroy_subscription(handler._wara_ps_exec_command_sub)
+    time.sleep(0.6)
+    for _ in range(8):
+        pub.publish(listed)
+        time.sleep(0.05)
+    blob = pack_command(CODE_ENOUGH_TASK, dest=7, sender=67, seq=21)
+    ok = pack_command(CODE_OK, dest=67, sender=7, seq=21)
+    deadline = time.time() + 8
+    while time.time() < deadline and not (
+            _dollar_b(ok) in st.fake.raw_bytes() and len(signals) >= 1):
+        st.fake.inject(_frame(67, blob))
+        pub.publish(listed)
+        time.sleep(0.3)
+    node_out, _ = st.stop()
+    assert len(signals) == 1, node_out
+    body = json.loads(signals[0].data)
+    assert body['command'] == 'signal-task'
+    assert body['signal'] == '$enough'
+    assert body['task-uuid'] == 'one'
+    handler._exec_command_cb(signals[0])
+    assert [task['task-uuid'] for task in handler.tasks_executing] == ['two']
+    assert handler.past_tasks[0]['task-uuid'] == 'one'
+    assert handler.past_tasks[0]['status'] == 'enough'
+    assert handler.emergency_flag is False
 
 
 @_skip

@@ -8,7 +8,9 @@ Targeted ``ABORT`` publishes ``std_msgs/Empty`` on the SMARC abort topic and
 answers with a DCCL ``OK``. Targeted ``ENOUGH`` publishes the WARAPS
 ``signal-unit`` ``$enough`` JSON on ``waraps/tst/command`` (the same string
 the MQTT bridge delivers) and answers with ``OK``. It does not publish the
-abort topic. The service waits for that ``OK`` and sends the command again,
+abort topic. ``ENOUGH_TASK`` publishes ``signal-task`` ``$enough`` on
+``waraps/exec/command`` for the task in ``waraps/sensor/executing_tasks``.
+The rest of that queue stays. The service waits for that ``OK`` and sends the command again,
 with a new sequence, until it arrives. ``start_telemetry`` and
 ``stop_telemetry`` use the same wait. When ``handle_telemetry`` is set, an
 addressed telemetry command is published on ``acoustic_telemetry`` for the
@@ -39,6 +41,7 @@ from serial_ping_pkg.common.acoustic_command import (
     CODE_ABORT,
     CODE_ABORT_ALL,
     CODE_ENOUGH,
+    CODE_ENOUGH_TASK,
     CODE_NAMES,
     CODE_OK,
     CODE_START_TELEMETRY,
@@ -48,7 +51,10 @@ from serial_ping_pkg.common.acoustic_command import (
     abort_applies,
     ack_matches,
     beacon_verb,
+    current_task_uuid,
     enough_applies,
+    enough_task_applies,
+    enough_task_exec_body,
     enough_tst_body,
     modem_int,
     pack_command,
@@ -68,6 +74,8 @@ class AcousticCmdNode(Node):
         self.declare_parameter('own_modem_id', '', id_desc)
         self.declare_parameter('abort_topic', 'smarc/abort')
         self.declare_parameter('enough_topic', 'waraps/tst/command')
+        self.declare_parameter('exec_topic', 'waraps/exec/command')
+        self.declare_parameter('executing_tasks_topic', 'waraps/sensor/executing_tasks')
         self.declare_parameter('allowed_senders', '')
         self.declare_parameter('handle_telemetry', False)
         self.declare_parameter('telemetry_senders', '')
@@ -80,6 +88,8 @@ class AcousticCmdNode(Node):
         self._own = modem_int(self.get_parameter('own_modem_id').value)
         self._abort_topic = self.get_parameter('abort_topic').get_parameter_value().string_value
         self._enough_topic = self.get_parameter('enough_topic').get_parameter_value().string_value
+        self._exec_topic = self.get_parameter('exec_topic').get_parameter_value().string_value
+        tasks_topic = self.get_parameter('executing_tasks_topic').get_parameter_value().string_value
         self._ack_timeout_s = self.get_parameter('ack_timeout_s').get_parameter_value().double_value
         self._max_attempts = max(1, self.get_parameter('max_attempts').get_parameter_value().integer_value)
         self._panic_shouts = max(1, self.get_parameter('panic_shouts').get_parameter_value().integer_value)
@@ -93,6 +103,9 @@ class AcousticCmdNode(Node):
 
         self._abort_pub = self.create_publisher(Empty, self._abort_topic, 10)
         self._enough_pub = self.create_publisher(String, self._enough_topic, 10)
+        self._exec_pub = self.create_publisher(String, self._exec_topic, 10)
+        self._current_task_uuid = None
+        self.create_subscription(String, tasks_topic, self._on_executing_tasks, 10)
         self._telemetry_pub = self.create_publisher(String, telem_topic, 10)
         self._seqs = SeqMemory()
         self._seq = 0
@@ -115,7 +128,8 @@ class AcousticCmdNode(Node):
             self.get_logger().info(
                 f'Acoustic commands for modem {self._own:03d}. '
                 f'Abort topic {self._abort_topic}. '
-                f'Enough topic {self._enough_topic}. Senders: {allow}. '
+                f'Enough topic {self._enough_topic}. '
+                f'Task enough topic {self._exec_topic}. Senders: {allow}. '
                 f'Targeted abort waits {self._ack_timeout_s:.1f}s, '
                 f'{self._max_attempts} attempts. '
                 f'Panic shouts {self._panic_shouts} times, {self._panic_gap_s:.1f}s apart, no ack. '
@@ -163,6 +177,9 @@ class AcousticCmdNode(Node):
             return
         if cmd['code'] == CODE_ENOUGH:
             self._receive_enough(cmd)
+            return
+        if cmd['code'] == CODE_ENOUGH_TASK:
+            self._receive_enough_task(cmd)
             return
         if cmd['code'] in (CODE_START_TELEMETRY, CODE_STOP_TELEMETRY):
             self._receive_telemetry(cmd)
@@ -220,6 +237,43 @@ class AcousticCmdNode(Node):
             self._send_ok(cmd)
         except Exception as exc:
             self.get_logger().error(f'Failed to ack enough: {exc}')
+
+    def _on_executing_tasks(self, msg):
+        task_uuid = current_task_uuid(msg.data)
+        with self._lock:
+            self._current_task_uuid = task_uuid
+
+    def _receive_enough_task(self, cmd):
+        if self._own is None or not enough_task_applies(cmd, self._own):
+            return
+        if not sender_allowed(cmd['sender'], self._allow):
+            self.get_logger().info(
+                f"Ignoring ENOUGH_TASK from {cmd['sender']:03d} (not allowed).",
+                throttle_duration_sec=5.0)
+            return
+        with self._lock:
+            fresh = not self._seqs.already_acted(cmd['sender'], cmd['seq'])
+            if fresh:
+                self._seqs.remember(cmd['sender'], cmd['seq'])
+            task_uuid = self._current_task_uuid
+        if fresh and task_uuid:
+            body = enough_task_exec_body(task_uuid)
+            body['com-uuid'] = (
+                f"acoustic-enough-task-{cmd['sender']:03d}-{cmd['seq']}")
+            msg = String()
+            msg.data = json.dumps(body)
+            self._exec_pub.publish(msg)
+            self.get_logger().warn(
+                f"ENOUGH_TASK from {cmd['sender']:03d} seq {cmd['seq']}; "
+                f"task {task_uuid} on {self._exec_topic}.")
+        elif fresh:
+            self.get_logger().warn(
+                f"ENOUGH_TASK from {cmd['sender']:03d} seq {cmd['seq']}; "
+                "no running task, queue left as it is.")
+        try:
+            self._send_ok(cmd)
+        except Exception as exc:
+            self.get_logger().error(f'Failed to ack enough-task: {exc}')
 
     def _receive_telemetry(self, cmd):
         if not self._handle_telemetry or self._own is None:
@@ -284,7 +338,7 @@ class AcousticCmdNode(Node):
         if code is None:
             response.success = False
             response.message = (
-                'command must be abort, abort_all, enough, '
+                'command must be abort, abort_all, enough, enough_task, '
                 'start_telemetry, or stop_telemetry')
             return response
         if code == CODE_ABORT_ALL:
@@ -342,6 +396,11 @@ class AcousticCmdNode(Node):
             self._receive_enough(cmd)
             response.success = True
             response.message = f'enough on this modem {self._own:03d} locally'
+            return response
+        if code == CODE_ENOUGH_TASK:
+            self._receive_enough_task(cmd)
+            response.success = True
+            response.message = f'enough-task on this modem {self._own:03d} locally'
             return response
         if not self._handle_telemetry:
             response.success = False
