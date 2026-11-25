@@ -55,6 +55,16 @@ def _ensure_dccl():
             if so.is_file():
                 ctypes.CDLL(str(so), mode=ctypes.RTLD_GLOBAL)
     import dccl as _dccl  # after path + CDLL
+    # python3-dccl4 ships dccl/option_extensions_pb2.py from protoc 3.12. The
+    # default protobuf 4.x engine (upb) refuses that file ("Descriptors cannot
+    # be created directly"), and dccl_acoustic_pb2 imports it. Register a copy
+    # regenerated with protoc 25 from the same descriptor before anything
+    # imports the packaged one, so PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+    # is not needed.
+    if 'dccl.option_extensions_pb2' not in sys.modules:
+        from serial_ping_pkg.common import dccl_option_extensions_pb2 as _opts
+        sys.modules['dccl.option_extensions_pb2'] = _opts
+        _dccl.option_extensions_pb2 = _opts
     dccl = _dccl
 
 

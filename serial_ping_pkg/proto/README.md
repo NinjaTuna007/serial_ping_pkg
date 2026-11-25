@@ -14,6 +14,7 @@ question: can the UART carry a non-printable payload at all? See
 | [`../serial_ping_pkg/common/ascii_on_air.py`](../serial_ping_pkg/common/ascii_on_air.py) | ASCII decimal strings | `$G` (Teensy ASCII store), relay/TWTT `$B` |
 | [`../serial_ping_pkg/common/dccl_codec.py`](../serial_ping_pkg/common/dccl_codec.py) | `pack` / `unpack` + CRC-8-ATM | only place nodes touch libdccl |
 | [`../serial_ping_pkg/common/dccl_acoustic_pb2.py`](../serial_ping_pkg/common/dccl_acoustic_pb2.py) | generated stubs | **do not edit**; regenerate from this proto |
+| [`../serial_ping_pkg/common/dccl_option_extensions_pb2.py`](../serial_ping_pkg/common/dccl_option_extensions_pb2.py) | libdccl's `dccl/option_extensions.proto`, regenerated with protoc 25 | **do not edit**; stands in for the protoc 3.12 copy in `python3-dccl4`, which protobuf 4.x refuses |
 
 Relay padded depth `DDD.DD` (max 999.99 m) is an ASCII frame width, not the DCCL
 depth cap (3000 m). Relay / TWTT / ping stay ASCII. DCCL is the beacon telemetry
